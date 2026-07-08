@@ -572,56 +572,19 @@ h3 {
   transform: translateX(-50%);
 }
 
-.move-button {
-  display: none;
-  position: absolute;
-  bottom: max(28px, env(safe-area-inset-bottom));
-  width: min(30vw, 132px);
-  height: 78px;
-  min-height: 78px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(246, 248, 255, 0.1);
-  color: var(--text);
-  backdrop-filter: blur(12px);
-  touch-action: none;
-}
-
-.move-button[hidden] {
-  display: none !important;
-}
-
-.move-button span {
-  transform: translateY(-4px);
-  font-size: 4rem;
-  line-height: 1;
-}
-
-.move-left {
-  left: max(18px, env(safe-area-inset-left));
-}
-
-.move-right {
-  right: max(18px, env(safe-area-inset-right));
-}
-
 .control-zone.is-jump {
   height: min(28vh, 220px);
   min-height: 132px;
   border-top-color: rgba(110, 243, 165, 0.22);
   background:
     linear-gradient(180deg, rgba(110, 243, 165, 0), rgba(110, 243, 165, 0.08)),
+    repeating-linear-gradient(90deg, rgba(110, 243, 165, 0.08) 0 1px, transparent 1px 38px),
     rgba(9, 11, 16, 0.5);
 }
 
 .control-zone.is-jump .control-glow,
 .control-zone.is-jump .control-thumb {
   display: none;
-}
-
-.control-zone.is-jump .move-button:not([hidden]) {
-  display: grid;
-  place-items: center;
 }
 
 .modal {

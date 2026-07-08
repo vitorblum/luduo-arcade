@@ -20,6 +20,8 @@ const DUOJUMP_PLAYER_RADIUS = 0.035;
 const DUOJUMP_PLATFORM_WIDTH = 0.25;
 const DUOJUMP_PLATFORM_HEIGHT = 0.018;
 const DUOJUMP_PLATFORM_COUNT = 9;
+const DUOJUMP_PLATFORM_SPACING = 0.085;
+const DUOJUMP_MAX_PLATFORM_STEP = 0.22;
 const DUOJUMP_GRAVITY = 2.35;
 const DUOJUMP_JUMP_SPEED = 0.86;
 const DUOJUMP_MOVE_SPEED = 0.72;
@@ -426,7 +428,7 @@ function handleMove(client, message) {
   const room = rooms.get(client.roomId);
   if (!room || room.game !== "duojump" || !room.runners[client.id]) return;
 
-  room.runners[client.id].direction = clamp(Math.round(Number(message.direction || 0)), -1, 1);
+  room.runners[client.id].direction = clamp(Number(message.direction || 0), -1, 1);
 }
 
 function createRoom(playerA, playerB, game) {
@@ -515,13 +517,37 @@ function createDuoJumpRunner(x, color) {
   };
 }
 
+function nextDuoJumpPlatformX(previousX) {
+  const minX = 0.14;
+  const maxX = 0.86;
+  const step = (Math.random() * 2 - 1) * DUOJUMP_MAX_PLATFORM_STEP;
+  let x = previousX + step;
+
+  if (x < minX) x = minX + (minX - x);
+  if (x > maxX) x = maxX - (x - maxX);
+  return clamp(x, minX, maxX);
+}
+
+function wrappedDistance(a, b) {
+  const normalize = (value) => {
+    const wrapped = value % 1;
+    return wrapped < 0 ? wrapped + 1 : wrapped;
+  };
+  const diff = Math.abs(normalize(a) - normalize(b));
+  return Math.min(diff, 1 - diff);
+}
+
 function createDuoJumpPlatforms() {
   const platforms = [];
+  let x = 0.5;
 
   for (let i = 0; i < DUOJUMP_PLATFORM_COUNT; i += 1) {
-    const y = 0.18 + i * 0.085;
-    platforms.push({
-      x: i === DUOJUMP_PLATFORM_COUNT - 1 ? 0.5 : 0.15 + Math.random() * 0.7,
+    const indexFromBottom = DUOJUMP_PLATFORM_COUNT - 1 - i;
+    const y = 0.18 + indexFromBottom * DUOJUMP_PLATFORM_SPACING;
+
+    if (i > 0) x = nextDuoJumpPlatformX(x);
+    platforms.unshift({
+      x,
       y,
       w: DUOJUMP_PLATFORM_WIDTH
     });
@@ -638,24 +664,44 @@ function duoJumpScrollSpeed(room, now) {
   return DUOJUMP_BASE_SCROLL + (duoJumpSpeedLevel(room, now) - 1) * DUOJUMP_SCROLL_STEP;
 }
 
-function resetDuoJumpRound(room, scorer, now) {
+function findDuoJumpRespawnPlatform(room) {
+  const candidates = room.platforms
+    .filter((platform) => platform.y > 0.52 && platform.y < 0.86)
+    .sort((a, b) => b.y - a.y);
+  return candidates[0] || room.platforms[room.platforms.length - 1] || { x: 0.5, y: 0.72, w: DUOJUMP_PLATFORM_WIDTH };
+}
+
+function respawnDuoJumpRunner(room, player) {
+  const runner = room.runners[player.id];
+  const platform = findDuoJumpRespawnPlatform(room);
+
+  runner.x = platform.x;
+  runner.y = platform.y - DUOJUMP_PLAYER_RADIUS;
+  runner.vy = -DUOJUMP_JUMP_SPEED;
+  runner.direction = 0;
+}
+
+function scoreDuoJumpFall(room, fallenPlayer, now) {
+  const scorer = room.players.find((candidate) => candidate !== fallenPlayer);
+  if (!scorer) return;
+
   room.lastScoredBy = scorer.id;
   room.scores[scorer.id] += 1;
-  room.pausedUntil = now + 1300;
-  room.runStartedAt = room.pausedUntil;
-  room.platforms = createDuoJumpPlatforms();
-  room.runners[room.players[0].id] = createDuoJumpRunner(0.38, "#24d6ff");
-  room.runners[room.players[1].id] = createDuoJumpRunner(0.62, "#ff4f91");
+  room.lastScoreAt = now;
+  respawnDuoJumpRunner(room, fallenPlayer);
 }
 
 function refillDuoJumpPlatforms(room) {
   room.platforms = room.platforms.filter((platform) => platform.y < 1.08);
 
   while (room.platforms.length < DUOJUMP_PLATFORM_COUNT) {
-    const topY = room.platforms.reduce((min, platform) => Math.min(min, platform.y), 0.22);
+    const topPlatform = room.platforms.reduce(
+      (top, platform) => (platform.y < top.y ? platform : top),
+      room.platforms[0] || { x: 0.5, y: 0.22 }
+    );
     room.platforms.push({
-      x: 0.15 + Math.random() * 0.7,
-      y: topY - 0.085,
+      x: nextDuoJumpPlatformX(topPlatform.x),
+      y: topPlatform.y - DUOJUMP_PLATFORM_SPACING,
       w: DUOJUMP_PLATFORM_WIDTH
     });
   }
@@ -695,7 +741,7 @@ function tickDuoJump(room, now) {
 
       for (const platform of room.platforms) {
         const isCrossing = previousBottom <= platform.y && currentBottom >= platform.y;
-        const isInside = Math.abs(runner.x - platform.x) <= platform.w / 2 + DUOJUMP_PLAYER_RADIUS * 0.8;
+        const isInside = wrappedDistance(runner.x, platform.x) <= platform.w / 2 + DUOJUMP_PLAYER_RADIUS * 0.8;
 
         if (isCrossing && isInside) {
           runner.y = platform.y - DUOJUMP_PLAYER_RADIUS;
@@ -706,9 +752,7 @@ function tickDuoJump(room, now) {
     }
 
     if (runner.y - DUOJUMP_PLAYER_RADIUS > 1.08) {
-      const scorer = room.players.find((candidate) => candidate !== player);
-      resetDuoJumpRound(room, scorer, now);
-      return;
+      scoreDuoJumpFall(room, player, now);
     }
   }
 }

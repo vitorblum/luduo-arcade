@@ -48,8 +48,6 @@ const declineInviteButton = document.getElementById("declineInviteButton");
 const leaveGameButton = document.getElementById("leaveGameButton");
 const canvas = document.getElementById("duopongCanvas");
 const controlZone = document.getElementById("controlZone");
-const leftButton = document.getElementById("leftMoveButton");
-const rightButton = document.getElementById("rightMoveButton");
 const youLabel = document.getElementById("youLabel");
 const opponentLabel = document.getElementById("opponentLabel");
 const youScore = document.getElementById("youScore");
@@ -76,6 +74,8 @@ const state = {
   lastMoveSentAt: 0,
   localPaddleX: 0.5,
   moveDirection: 0,
+  jumpPointerId: null,
+  jumpDragStartX: 0,
   visualGame: null,
   lastServerStateAt: 0,
   lastFrameAt: 0
@@ -89,12 +89,6 @@ function showScreen(name) {
 function setMessage(element, message, good = false) {
   element.textContent = message || "";
   element.style.color = good ? "var(--green)" : "var(--amber)";
-}
-
-function setMoveControlsVisible(isVisible) {
-  [leftButton, rightButton].forEach((button) => {
-    if (button) button.hidden = !isVisible;
-  });
 }
 
 function normalizeName(name) {
@@ -281,7 +275,6 @@ function handleServerMessage(message) {
     setMessage(lobbyMessage, message.message || "O outro jogador saiu.");
     state.game = null;
     state.visualGame = null;
-    setMoveControlsVisible(false);
     showScreen("home");
     return;
   }
@@ -387,7 +380,6 @@ function startDuoPong(message) {
   opponentLabel.textContent = message.opponent || "Rival";
   controlZone.classList.add("is-pong");
   controlZone.classList.remove("is-jump");
-  setMoveControlsVisible(false);
   showScreen("game");
   resizeCanvas();
   sendPaddle(0.5, true);
@@ -422,7 +414,6 @@ function startDuoJump(message) {
   opponentLabel.textContent = message.opponent || "Rival";
   controlZone.classList.remove("is-pong");
   controlZone.classList.add("is-jump");
-  setMoveControlsVisible(true);
   showScreen("game");
   resizeCanvas();
   sendMove(0, true);
@@ -750,41 +741,58 @@ function sendPaddle(x, force = false) {
 }
 
 function sendMove(direction, force = false) {
-  state.moveDirection = direction;
+  state.moveDirection = Math.max(-1, Math.min(1, direction));
   const now = performance.now();
   if (!force && now - state.lastMoveSentAt < 33) return;
   state.lastMoveSentAt = now;
-  send({ type: "move", direction });
+  send({ type: "move", direction: state.moveDirection });
 }
 
 function handlePointer(event) {
   if (!screens.game.classList.contains("is-active")) return;
-  if (!state.game || state.game.game !== "duopong") return;
+  if (!state.game) return;
+
+  if (state.game.game === "duojump") {
+    handleJumpDrag(event);
+    return;
+  }
+
+  if (state.game.game !== "duopong") return;
   event.preventDefault();
   sendPaddle(pointerToPaddleX(event));
 }
 
-function bindMoveButton(button, direction) {
-  if (!button) return;
+function jumpDragDirection(event) {
+  const fullDragDistance = Math.max(56, window.innerWidth * 0.32);
+  return Math.max(-1, Math.min(1, (event.clientX - state.jumpDragStartX) / fullDragDistance));
+}
 
-  button.addEventListener("pointerdown", (event) => {
-    if (!state.game || state.game.game !== "duojump") return;
-    event.preventDefault();
-    button.setPointerCapture(event.pointerId);
-    sendMove(direction, true);
-  });
+function handleJumpDrag(event) {
+  event.preventDefault();
 
-  const stop = (event) => {
-    if (!state.game || state.game.game !== "duojump") return;
-    event.preventDefault();
+  if (event.type === "pointerdown") {
+    state.jumpPointerId = event.pointerId;
+    state.jumpDragStartX = event.clientX;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch (err) {
+      // Pointer capture is not essential; the window handlers still stop movement.
+    }
     sendMove(0, true);
-  };
+    return;
+  }
 
-  button.addEventListener("pointerup", stop);
-  button.addEventListener("pointercancel", stop);
-  button.addEventListener("lostpointercapture", () => {
-    if (state.game && state.game.game === "duojump") sendMove(0, true);
-  });
+  if (state.jumpPointerId !== event.pointerId) return;
+
+  if (event.type === "pointermove") {
+    sendMove(jumpDragDirection(event));
+    return;
+  }
+
+  if (event.type === "pointerup" || event.type === "pointercancel") {
+    state.jumpPointerId = null;
+    sendMove(0, true);
+  }
 }
 
 function notifyLeavingApp() {
@@ -866,16 +874,23 @@ leaveGameButton.addEventListener("click", () => {
   send({ type: "leave-room" });
   state.game = null;
   state.visualGame = null;
-  setMoveControlsVisible(false);
   showScreen("home");
 });
 
 controlZone.addEventListener("pointerdown", handlePointer);
 controlZone.addEventListener("pointermove", handlePointer);
+controlZone.addEventListener("pointerup", handlePointer);
+controlZone.addEventListener("pointercancel", handlePointer);
 canvas.addEventListener("pointerdown", handlePointer);
 canvas.addEventListener("pointermove", handlePointer);
-bindMoveButton(leftButton, -1);
-bindMoveButton(rightButton, 1);
+canvas.addEventListener("pointerup", handlePointer);
+canvas.addEventListener("pointercancel", handlePointer);
+window.addEventListener("pointerup", (event) => {
+  if (state.game && state.game.game === "duojump" && state.jumpPointerId === event.pointerId) {
+    state.jumpPointerId = null;
+    sendMove(0, true);
+  }
+});
 window.addEventListener("resize", resizeCanvas);
 window.addEventListener("pagehide", notifyLeavingApp);
 window.addEventListener("beforeunload", notifyLeavingApp);
@@ -894,6 +909,5 @@ if ("serviceWorker" in navigator) {
 }
 
 loadSavedIdentity();
-setMoveControlsVisible(false);
 renderGames();
 connect();

@@ -8,6 +8,8 @@ const path = require("path");
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const TICK_MS = 1000 / 30;
+const STALE_SWEEP_MS = 3000;
+const CLIENT_TIMEOUT_MS = 12000;
 const PADDLE_WIDTH = 0.27;
 const PADDLE_Y_BOTTOM = 0.92;
 const PADDLE_Y_TOP = 0.08;
@@ -46,6 +48,13 @@ function displayName(name) {
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 18);
+}
+
+function normalizeDeviceId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-z0-9-]/gi, "")
+    .slice(0, 64);
 }
 
 function clamp(value, min, max) {
@@ -240,6 +249,17 @@ function closeClient(client) {
 
 function handleMessage(client, message) {
   const type = String(message.type || "");
+  client.lastSeen = Date.now();
+
+  if (type === "goodbye") {
+    closeClient(client);
+    return;
+  }
+
+  if (type === "pong" || type === "ping") {
+    send(client, { type: "pong", now: Date.now() });
+    return;
+  }
 
   if (type === "hello") {
     handleHello(client, message);
@@ -261,8 +281,6 @@ function handleMessage(client, message) {
     handlePaddle(client, message);
   } else if (type === "leave-room") {
     leaveRoom(client, false);
-  } else if (type === "pong" || type === "ping") {
-    send(client, { type: "pong", now: Date.now() });
   } else {
     sendError(client, "unknown-type", "Comando desconhecido.");
   }
@@ -276,6 +294,7 @@ function handleHello(client, message) {
 
   const rawName = displayName(message.name);
   const key = normalizeName(rawName);
+  const deviceId = normalizeDeviceId(message.deviceId);
 
   if (!key || rawName.length < 2) {
     sendError(client, "invalid-name", "Use um nome com pelo menos 2 letras.");
@@ -287,13 +306,19 @@ function handleHello(client, message) {
     return;
   }
 
-  if (names.has(key)) {
+  const existing = names.get(key);
+  if (existing && (!deviceId || existing.deviceId !== deviceId)) {
     sendError(client, "name-taken", "Esse nome ja esta em uso.");
     return;
   }
 
+  if (existing && existing !== client) {
+    closeClient(existing);
+  }
+
   client.name = rawName;
   client.nameKey = key;
+  client.deviceId = deviceId;
   client.invites = new Map();
   names.set(key, client);
 
@@ -564,6 +589,17 @@ function gameLoop() {
   }
 }
 
+function sweepStaleClients() {
+  const now = Date.now();
+
+  for (const client of Array.from(clients)) {
+    if (client.closed) continue;
+    if (now - client.lastSeen > CLIENT_TIMEOUT_MS) {
+      closeClient(client);
+    }
+  }
+}
+
 const server = http.createServer(serveStatic);
 
 server.on("upgrade", (req, socket) => {
@@ -591,18 +627,22 @@ server.on("upgrade", (req, socket) => {
     buffer: Buffer.alloc(0),
     name: "",
     nameKey: "",
+    deviceId: "",
     roomId: null,
     invites: new Map(),
+    lastSeen: Date.now(),
     closed: false
   };
 
   clients.add(client);
+  socket.setKeepAlive(true, 5000);
   socket.on("data", (data) => parseFrames(client, data));
   socket.on("close", () => closeClient(client));
   socket.on("error", () => closeClient(client));
 });
 
 setInterval(gameLoop, TICK_MS);
+setInterval(sweepStaleClients, STALE_SWEEP_MS);
 
 server.listen(PORT, () => {
   console.log(`Luduo Arcade online em http://localhost:${PORT}`);

@@ -9,6 +9,10 @@ const MINIGAMES = [
   }
 ];
 
+const STORAGE_NAME_KEY = "luduo-player-name";
+const STORAGE_DEVICE_KEY = "luduo-device-id";
+const HEARTBEAT_MS = 4000;
+
 const screens = {
   login: document.getElementById("loginScreen"),
   home: document.getElementById("homeScreen"),
@@ -44,11 +48,14 @@ const ctx = canvas.getContext("2d");
 const state = {
   socket: null,
   playerName: "",
+  deviceId: "",
   selectedGame: "duopong",
   players: [],
   inviteFrom: "",
   game: null,
   reconnectTimer: null,
+  pingTimer: null,
+  leavingApp: false,
   renderStarted: false,
   lastPaddleSentAt: 0,
   localPaddleX: 0.5,
@@ -71,7 +78,85 @@ function normalizeName(name) {
   return String(name || "").trim().replace(/\s+/g, " ");
 }
 
+function readStoredValue(key) {
+  try {
+    return localStorage.getItem(key) || "";
+  } catch (err) {
+    return "";
+  }
+}
+
+function writeStoredValue(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err) {
+    // Some Android WebViews can block storage in unusual modes.
+  }
+}
+
+function makeDeviceId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+
+  return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureDeviceId() {
+  const saved = readStoredValue(STORAGE_DEVICE_KEY);
+  if (saved) return saved;
+
+  const created = makeDeviceId();
+  writeStoredValue(STORAGE_DEVICE_KEY, created);
+  return created;
+}
+
+function sendHello() {
+  if (!state.playerName) return false;
+  return send({
+    type: "hello",
+    name: state.playerName,
+    deviceId: state.deviceId
+  });
+}
+
+function startHeartbeat() {
+  clearInterval(state.pingTimer);
+  state.pingTimer = setInterval(() => {
+    send({ type: "ping" });
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  clearInterval(state.pingTimer);
+  state.pingTimer = null;
+}
+
+function loadSavedIdentity() {
+  state.deviceId = ensureDeviceId();
+
+  const savedName = normalizeName(readStoredValue(STORAGE_NAME_KEY));
+  if (!savedName || savedName.length < 2) return;
+
+  state.playerName = savedName;
+  nameInput.value = savedName;
+  playerName.textContent = savedName;
+  setMessage(loginMessage, `Entrando como ${savedName}...`);
+}
+
+function savePlayerName(name) {
+  writeStoredValue(STORAGE_NAME_KEY, name);
+}
+
 function connect() {
+  if (
+    state.socket &&
+    (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  state.leavingApp = false;
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(`${protocol}//${window.location.host}`);
   state.socket = socket;
@@ -79,9 +164,7 @@ function connect() {
 
   socket.addEventListener("open", () => {
     connectionDot.classList.add("is-online");
-    if (state.playerName) {
-      send({ type: "hello", name: state.playerName });
-    }
+    sendHello();
   });
 
   socket.addEventListener("message", (event) => {
@@ -93,8 +176,9 @@ function connect() {
   });
 
   socket.addEventListener("close", () => {
+    stopHeartbeat();
     connectionDot.classList.remove("is-online");
-    if (state.playerName) {
+    if (state.playerName && !state.leavingApp) {
       setMessage(lobbyMessage, "Conexao caiu. Tentando voltar...");
       clearTimeout(state.reconnectTimer);
       state.reconnectTimer = setTimeout(connect, 1200);
@@ -109,9 +193,15 @@ function send(message) {
 }
 
 function handleServerMessage(message) {
+  if (message.type === "pong") {
+    return;
+  }
+
   if (message.type === "hello-ok") {
     state.playerName = message.name;
     playerName.textContent = message.name;
+    savePlayerName(message.name);
+    startHeartbeat();
     setMessage(loginMessage, "");
     setMessage(lobbyMessage, "Voce entrou como " + message.name + ".", true);
     showScreen("home");
@@ -167,6 +257,15 @@ function handleServerMessage(message) {
 
   if (message.type === "error") {
     const text = message.message || "Algo deu errado.";
+    if (["name-taken", "invalid-name", "already-logged"].includes(message.code)) {
+      stopHeartbeat();
+      state.playerName = "";
+      playerName.textContent = "";
+      showScreen("login");
+      setMessage(loginMessage, text);
+      return;
+    }
+
     if (screens.login.classList.contains("is-active")) {
       setMessage(loginMessage, text);
     } else {
@@ -481,6 +580,32 @@ function handlePointer(event) {
   sendPaddle(pointerToPaddleX(event));
 }
 
+function notifyLeavingApp() {
+  if (state.leavingApp) return;
+  state.leavingApp = true;
+  stopHeartbeat();
+
+  if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+    send({ type: "goodbye" });
+    try {
+      state.socket.close(1000, "leaving");
+    } catch (err) {
+      // Closing can fail when the WebView is already shutting down.
+    }
+  }
+}
+
+function resumeApp() {
+  state.leavingApp = false;
+  if (
+    state.playerName &&
+    (!state.socket ||
+      (state.socket.readyState !== WebSocket.OPEN && state.socket.readyState !== WebSocket.CONNECTING))
+  ) {
+    connect();
+  }
+}
+
 loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const name = normalizeName(nameInput.value);
@@ -493,11 +618,12 @@ loginForm.addEventListener("submit", (event) => {
   state.playerName = name;
   playerName.textContent = name;
   setMessage(loginMessage, "Entrando...");
+  state.leavingApp = false;
 
-  if (!state.socket || state.socket.readyState === WebSocket.CLOSED) {
+  if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
     connect();
   } else {
-    send({ type: "hello", name });
+    sendHello();
   }
 });
 
@@ -540,6 +666,15 @@ controlZone.addEventListener("pointermove", handlePointer);
 canvas.addEventListener("pointerdown", handlePointer);
 canvas.addEventListener("pointermove", handlePointer);
 window.addEventListener("resize", resizeCanvas);
+window.addEventListener("pagehide", notifyLeavingApp);
+window.addEventListener("beforeunload", notifyLeavingApp);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    notifyLeavingApp();
+  } else {
+    resumeApp();
+  }
+});
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
@@ -547,5 +682,6 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+loadSavedIdentity();
 renderGames();
 connect();

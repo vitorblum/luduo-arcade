@@ -8,7 +8,6 @@ const path = require("path");
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const TICK_MS = 1000 / 30;
-const STATE_SEND_MS = 1000 / 20;
 const PADDLE_WIDTH = 0.27;
 const PADDLE_Y_BOTTOM = 0.92;
 const PADDLE_Y_TOP = 0.08;
@@ -404,7 +403,6 @@ function createDuoPongRoom(playerA, playerB) {
     rallyStartedAt: now + 1200,
     pausedUntil: now + 1200,
     lastTick: now,
-    lastStateSent: 0,
     lastScoredBy: null
   };
 
@@ -559,9 +557,6 @@ function gameLoop() {
   for (const room of rooms.values()) {
     if (room.game !== "duopong") continue;
     tickDuoPong(room, now);
-
-    if (now - room.lastStateSent < STATE_SEND_MS) continue;
-    room.lastStateSent = now;
 
     for (const player of room.players) {
       send(player, stateFor(room, player, now));

@@ -276,25 +276,45 @@ function createVisualGame(game) {
   };
 }
 
-function clampValue(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function lerp(start, end, amount) {
   return start + (end - start) * amount;
 }
 
-function predictedBall(game, now) {
-  const age = Math.min(0.12, Math.max(0, (now - state.lastServerStateAt) / 1000));
-  const canPredict =
+function canPredictBall(game) {
+  return (
     game.pausedMs <= 0 &&
     Number.isFinite(game.ball.vx) &&
-    Number.isFinite(game.ball.vy);
+    Number.isFinite(game.ball.vy)
+  );
+}
+
+function reflectPosition(value, min, max) {
+  const size = max - min;
+  if (size <= 0) return min;
+
+  let offset = (value - min) % (size * 2);
+  if (offset < 0) offset += size * 2;
+  if (offset > size) offset = size * 2 - offset;
+  return min + offset;
+}
+
+function projectBall(game, seconds) {
+  if (!canPredictBall(game)) {
+    return {
+      x: game.ball.x,
+      y: game.ball.y
+    };
+  }
 
   return {
-    x: clampValue(game.ball.x + (canPredict ? game.ball.vx * age : 0), 0.022, 0.978),
-    y: clampValue(game.ball.y + (canPredict ? game.ball.vy * age : 0), 0.022, 0.978)
+    x: reflectPosition(game.ball.x + game.ball.vx * seconds, 0.022, 0.978),
+    y: reflectPosition(game.ball.y + game.ball.vy * seconds, 0.022, 0.978)
   };
+}
+
+function predictedBall(game, now) {
+  const age = Math.min(0.25, Math.max(0, (now - state.lastServerStateAt) / 1000));
+  return projectBall(game, age);
 }
 
 function updateVisualGame(now) {
@@ -304,16 +324,40 @@ function updateVisualGame(now) {
     state.visualGame = createVisualGame(game);
   }
 
-  const dt = Math.min(0.05, Math.max(0, (now - (state.lastFrameAt || now)) / 1000));
+  const dt = Math.min(0.04, Math.max(0, (now - (state.lastFrameAt || now)) / 1000));
   state.lastFrameAt = now;
 
   const visual = state.visualGame;
-  const ball = predictedBall(game, now);
-  const ballFollow = 1 - Math.exp(-dt * 18);
+  if (canPredictBall(game)) {
+    const nextBall = projectBall(
+      {
+        pausedMs: 0,
+        ball: {
+          x: visual.ball.x,
+          y: visual.ball.y,
+          vx: game.ball.vx,
+          vy: game.ball.vy
+        }
+      },
+      dt
+    );
+    visual.ball.x = nextBall.x;
+    visual.ball.y = nextBall.y;
+  }
+
+  const targetBall = predictedBall(game, now);
+  const drift = Math.hypot(visual.ball.x - targetBall.x, visual.ball.y - targetBall.y);
+  const serverAge = now - state.lastServerStateAt;
+  const ballFollow =
+    game.pausedMs > 0 || drift > 0.22
+      ? 1
+      : serverAge > 260
+        ? 0
+        : 1 - Math.exp(-dt * 7);
   const paddleFollow = 1 - Math.exp(-dt * 14);
 
-  visual.ball.x = lerp(visual.ball.x, ball.x, ballFollow);
-  visual.ball.y = lerp(visual.ball.y, ball.y, ballFollow);
+  visual.ball.x = lerp(visual.ball.x, targetBall.x, ballFollow);
+  visual.ball.y = lerp(visual.ball.y, targetBall.y, ballFollow);
   visual.paddles.opponent = lerp(visual.paddles.opponent, game.paddles.opponent, paddleFollow);
   visual.paddles.you = state.localPaddleX;
 
@@ -321,7 +365,7 @@ function updateVisualGame(now) {
 }
 
 function resizeCanvas() {
-  const ratio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+  const ratio = Math.max(1, Math.min(window.devicePixelRatio || 1, 1.5));
   canvas.width = Math.floor(window.innerWidth * ratio);
   canvas.height = Math.floor(window.innerHeight * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
@@ -377,7 +421,7 @@ function drawDuoPong() {
     const ballRadius = Math.max(8, Math.min(width, height) * 0.018);
     ctx.fillStyle = "#f6f8ff";
     ctx.shadowColor = "rgba(255, 255, 255, 0.9)";
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.arc(ballX, ballY, ballRadius, 0, Math.PI * 2);
     ctx.fill();
@@ -401,7 +445,7 @@ function drawPaddle(centerX, y, width, height, color) {
   const x = centerX - width / 2;
   ctx.fillStyle = color;
   ctx.shadowColor = color;
-  ctx.shadowBlur = 18;
+  ctx.shadowBlur = 10;
   roundRect(ctx, x, y, width, height, 999);
   ctx.fill();
   ctx.shadowBlur = 0;
@@ -426,7 +470,7 @@ function pointerToPaddleX(event) {
 function sendPaddle(x, force = false) {
   state.localPaddleX = x;
   const now = performance.now();
-  if (!force && now - state.lastPaddleSentAt < 40) return;
+  if (!force && now - state.lastPaddleSentAt < 33) return;
   state.lastPaddleSentAt = now;
   send({ type: "paddle", x });
 }

@@ -51,7 +51,10 @@ const state = {
   reconnectTimer: null,
   renderStarted: false,
   lastPaddleSentAt: 0,
-  localPaddleX: 0.5
+  localPaddleX: 0.5,
+  visualGame: null,
+  lastServerStateAt: 0,
+  lastFrameAt: 0
 };
 
 function showScreen(name) {
@@ -145,7 +148,11 @@ function handleServerMessage(message) {
   }
 
   if (message.type === "game-state") {
+    state.lastServerStateAt = performance.now();
     state.game = message;
+    if (!state.visualGame) {
+      state.visualGame = createVisualGame(message);
+    }
     updateHud(message);
     return;
   }
@@ -153,6 +160,7 @@ function handleServerMessage(message) {
   if (message.type === "opponent-left") {
     setMessage(lobbyMessage, message.message || "O outro jogador saiu.");
     state.game = null;
+    state.visualGame = null;
     showScreen("home");
     return;
   }
@@ -224,13 +232,16 @@ function startDuoPong(message) {
     game: "duopong",
     you: state.playerName,
     opponent: message.opponent,
-    ball: { x: 0.5, y: 0.5 },
+    ball: { x: 0.5, y: 0.5, vx: 0, vy: 0 },
     paddles: { you: 0.5, opponent: 0.5 },
     scores: { you: 0, opponent: 0 },
     speed: 1,
     pausedMs: 1200
   };
   state.localPaddleX = 0.5;
+  state.visualGame = createVisualGame(state.game);
+  state.lastFrameAt = performance.now();
+  state.lastServerStateAt = state.lastFrameAt;
   youLabel.textContent = state.playerName || "Voce";
   opponentLabel.textContent = message.opponent || "Rival";
   showScreen("game");
@@ -252,6 +263,63 @@ function updateHud(game) {
   countdownLabel.textContent = game.pausedMs > 0 ? Math.ceil(game.pausedMs / 1000) : "";
 }
 
+function createVisualGame(game) {
+  return {
+    ball: {
+      x: game.ball.x,
+      y: game.ball.y
+    },
+    paddles: {
+      you: game.paddles.you,
+      opponent: game.paddles.opponent
+    }
+  };
+}
+
+function clampValue(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function lerp(start, end, amount) {
+  return start + (end - start) * amount;
+}
+
+function predictedBall(game, now) {
+  const age = Math.min(0.12, Math.max(0, (now - state.lastServerStateAt) / 1000));
+  const canPredict =
+    game.pausedMs <= 0 &&
+    Number.isFinite(game.ball.vx) &&
+    Number.isFinite(game.ball.vy);
+
+  return {
+    x: clampValue(game.ball.x + (canPredict ? game.ball.vx * age : 0), 0.022, 0.978),
+    y: clampValue(game.ball.y + (canPredict ? game.ball.vy * age : 0), 0.022, 0.978)
+  };
+}
+
+function updateVisualGame(now) {
+  const game = state.game;
+  if (!game) return null;
+  if (!state.visualGame) {
+    state.visualGame = createVisualGame(game);
+  }
+
+  const dt = Math.min(0.05, Math.max(0, (now - (state.lastFrameAt || now)) / 1000));
+  state.lastFrameAt = now;
+
+  const visual = state.visualGame;
+  const ball = predictedBall(game, now);
+  const ballFollow = 1 - Math.exp(-dt * 18);
+  const paddleFollow = 1 - Math.exp(-dt * 14);
+
+  visual.ball.x = lerp(visual.ball.x, ball.x, ballFollow);
+  visual.ball.y = lerp(visual.ball.y, ball.y, ballFollow);
+  visual.paddles.opponent = lerp(visual.paddles.opponent, game.paddles.opponent, paddleFollow);
+  visual.paddles.you = state.localPaddleX;
+
+  return visual;
+}
+
 function resizeCanvas() {
   const ratio = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
   canvas.width = Math.floor(window.innerWidth * ratio);
@@ -268,6 +336,7 @@ function drawDuoPong() {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const game = state.game;
+  const visual = updateVisualGame(performance.now());
 
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = "#090b10";
@@ -296,14 +365,14 @@ function drawDuoPong() {
 
   drawGlowNet(courtLeft, courtTop, courtWidth, courtHeight);
 
-  if (game) {
-    const ballX = courtLeft + game.ball.x * courtWidth;
-    const ballY = courtTop + game.ball.y * courtHeight;
+  if (game && visual) {
+    const ballX = courtLeft + visual.ball.x * courtWidth;
+    const ballY = courtTop + visual.ball.y * courtHeight;
     const paddleWidth = Math.max(84, courtWidth * 0.27);
     const paddleHeight = 12;
 
-    drawPaddle(courtLeft + game.paddles.opponent * courtWidth, courtTop + 20, paddleWidth, paddleHeight, "#ff4f91");
-    drawPaddle(courtLeft + state.localPaddleX * courtWidth, courtBottom - 32, paddleWidth, paddleHeight, "#24d6ff");
+    drawPaddle(courtLeft + visual.paddles.opponent * courtWidth, courtTop + 20, paddleWidth, paddleHeight, "#ff4f91");
+    drawPaddle(courtLeft + visual.paddles.you * courtWidth, courtBottom - 32, paddleWidth, paddleHeight, "#24d6ff");
 
     const ballRadius = Math.max(8, Math.min(width, height) * 0.018);
     ctx.fillStyle = "#f6f8ff";
@@ -357,7 +426,7 @@ function pointerToPaddleX(event) {
 function sendPaddle(x, force = false) {
   state.localPaddleX = x;
   const now = performance.now();
-  if (!force && now - state.lastPaddleSentAt < 33) return;
+  if (!force && now - state.lastPaddleSentAt < 40) return;
   state.lastPaddleSentAt = now;
   send({ type: "paddle", x });
 }
@@ -418,6 +487,7 @@ declineInviteButton.addEventListener("click", () => {
 leaveGameButton.addEventListener("click", () => {
   send({ type: "leave-room" });
   state.game = null;
+  state.visualGame = null;
   showScreen("home");
 });
 

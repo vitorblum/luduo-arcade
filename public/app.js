@@ -91,6 +91,12 @@ function setMessage(element, message, good = false) {
   element.style.color = good ? "var(--green)" : "var(--amber)";
 }
 
+function setMoveControlsVisible(isVisible) {
+  [leftButton, rightButton].forEach((button) => {
+    if (button) button.hidden = !isVisible;
+  });
+}
+
 function normalizeName(name) {
   return String(name || "").trim().replace(/\s+/g, " ");
 }
@@ -275,6 +281,7 @@ function handleServerMessage(message) {
     setMessage(lobbyMessage, message.message || "O outro jogador saiu.");
     state.game = null;
     state.visualGame = null;
+    setMoveControlsVisible(false);
     showScreen("home");
     return;
   }
@@ -380,6 +387,7 @@ function startDuoPong(message) {
   opponentLabel.textContent = message.opponent || "Rival";
   controlZone.classList.add("is-pong");
   controlZone.classList.remove("is-jump");
+  setMoveControlsVisible(false);
   showScreen("game");
   resizeCanvas();
   sendPaddle(0.5, true);
@@ -414,6 +422,7 @@ function startDuoJump(message) {
   opponentLabel.textContent = message.opponent || "Rival";
   controlZone.classList.remove("is-pong");
   controlZone.classList.add("is-jump");
+  setMoveControlsVisible(true);
   showScreen("game");
   resizeCanvas();
   sendMove(0, true);
@@ -857,6 +866,7 @@ leaveGameButton.addEventListener("click", () => {
   send({ type: "leave-room" });
   state.game = null;
   state.visualGame = null;
+  setMoveControlsVisible(false);
   showScreen("home");
 });
 
@@ -884,5 +894,6 @@ if ("serviceWorker" in navigator) {
 }
 
 loadSavedIdentity();
+setMoveControlsVisible(false);
 renderGames();
 connect();

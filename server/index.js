@@ -152,9 +152,10 @@ function serveStatic(req, res) {
     }
 
     const ext = path.extname(filePath);
+    const shouldRevalidate = [".html", ".js", ".css", ".webmanifest"].includes(ext);
     res.writeHead(200, {
       "Content-Type": mimeTypes[ext] || "application/octet-stream",
-      "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=86400"
+      "Cache-Control": shouldRevalidate ? "no-cache" : "public, max-age=86400"
     });
     res.end(data);
   });

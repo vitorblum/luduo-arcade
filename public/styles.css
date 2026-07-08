@@ -587,6 +587,10 @@ h3 {
   touch-action: none;
 }
 
+.move-button[hidden] {
+  display: none !important;
+}
+
 .move-button span {
   transform: translateY(-4px);
   font-size: 4rem;
@@ -615,7 +619,7 @@ h3 {
   display: none;
 }
 
-.control-zone.is-jump .move-button {
+.control-zone.is-jump .move-button:not([hidden]) {
   display: grid;
   place-items: center;
 }

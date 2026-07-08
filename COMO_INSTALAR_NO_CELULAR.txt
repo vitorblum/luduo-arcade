@@ -1,0 +1,23 @@
+Arquivo para enviar pelo WhatsApp:
+
+Luduo-Arcade.apk
+
+Como instalar no Android:
+
+1. Envie o arquivo Luduo-Arcade.apk como DOCUMENTO no WhatsApp.
+2. No celular, baixe o arquivo.
+3. Toque no arquivo baixado.
+4. Se aparecer "instalar apps desconhecidos", permita para o WhatsApp ou para o app Arquivos.
+5. Toque em Instalar.
+6. Abra o app Luduo Arcade.
+
+Se o celular disser "nao foi possivel abrir o arquivo":
+
+- Abra o app Arquivos / Meus Arquivos do celular.
+- Va em Downloads ou WhatsApp Documents.
+- Toque em Luduo-Arcade.apk por la.
+
+Se o app abrir e ficar carregando:
+
+- Confira se o celular tem internet.
+- Aguarde alguns segundos, porque o servidor gratis do Render pode demorar para acordar quando fica parado.

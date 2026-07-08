@@ -1,6 +1,9 @@
 name: Gerar APK Android
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       server_url:
@@ -38,7 +41,9 @@ jobs:
           gradle-version: "8.10.2"
 
       - name: Gerar APK instalavel
-        run: gradle assembleDebug -PserverUrl="${{ github.event.inputs.server_url }}"
+        run: gradle assembleDebug -PserverUrl="$SERVER_URL"
+        env:
+          SERVER_URL: ${{ github.event.inputs.server_url || 'https://luduo-arcade.onrender.com' }}
 
       - name: Publicar APK para download
         uses: actions/upload-artifact@v4

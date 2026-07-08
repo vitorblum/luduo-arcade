@@ -16,10 +16,24 @@ const PADDLE_Y_TOP = 0.08;
 const BALL_RADIUS = 0.022;
 const BASE_SPEED = 0.42;
 const SPEED_STEP = 0.1;
+const DUOJUMP_PLAYER_RADIUS = 0.035;
+const DUOJUMP_PLATFORM_WIDTH = 0.25;
+const DUOJUMP_PLATFORM_HEIGHT = 0.018;
+const DUOJUMP_PLATFORM_COUNT = 9;
+const DUOJUMP_GRAVITY = 2.35;
+const DUOJUMP_JUMP_SPEED = 0.86;
+const DUOJUMP_MOVE_SPEED = 0.72;
+const DUOJUMP_BASE_SCROLL = 0.12;
+const DUOJUMP_SCROLL_STEP = 0.035;
 
 const clients = new Set();
 const names = new Map();
 const rooms = new Map();
+
+const gameTitles = {
+  duopong: "DuoPong",
+  duojump: "DuoJump"
+};
 
 let nextClientId = 1;
 let nextRoomId = 1;
@@ -279,6 +293,8 @@ function handleMessage(client, message) {
     handleDecline(client, message);
   } else if (type === "paddle") {
     handlePaddle(client, message);
+  } else if (type === "move") {
+    handleMove(client, message);
   } else if (type === "leave-room") {
     leaveRoom(client, false);
   } else {
@@ -336,7 +352,7 @@ function handleChallenge(client, message) {
   const game = String(message.game || "duopong");
   const target = names.get(targetKey);
 
-  if (game !== "duopong") {
+  if (!gameTitles[game]) {
     sendError(client, "game-unavailable", "Esse minijogo ainda nao esta disponivel.");
     return;
   }
@@ -382,7 +398,7 @@ function handleAccept(client, message) {
   }
 
   client.invites.delete(fromKey);
-  createDuoPongRoom(challenger, client);
+  createRoom(challenger, client, invite.game);
 }
 
 function handleDecline(client, message) {
@@ -402,6 +418,23 @@ function handlePaddle(client, message) {
   if (!room || room.game !== "duopong") return;
 
   room.paddles[client.id] = clamp(Number(message.x || 0.5), PADDLE_WIDTH / 2, 1 - PADDLE_WIDTH / 2);
+}
+
+function handleMove(client, message) {
+  if (!client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room || room.game !== "duojump" || !room.runners[client.id]) return;
+
+  room.runners[client.id].direction = clamp(Math.round(Number(message.direction || 0)), -1, 1);
+}
+
+function createRoom(playerA, playerB, game) {
+  if (game === "duojump") {
+    createDuoJumpRoom(playerA, playerB);
+    return;
+  }
+
+  createDuoPongRoom(playerA, playerB);
 }
 
 function createDuoPongRoom(playerA, playerB) {
@@ -438,6 +471,62 @@ function createDuoPongRoom(playerA, playerB) {
   send(playerA, { type: "room-start", roomId, game: "duopong", opponent: playerB.name });
   send(playerB, { type: "room-start", roomId, game: "duopong", opponent: playerA.name });
   broadcastPlayers();
+}
+
+function createDuoJumpRoom(playerA, playerB) {
+  const roomId = `room-${nextRoomId++}`;
+  const now = Date.now();
+  const room = {
+    id: roomId,
+    game: "duojump",
+    players: [playerA, playerB],
+    scores: {
+      [playerA.id]: 0,
+      [playerB.id]: 0
+    },
+    runners: {
+      [playerA.id]: createDuoJumpRunner(0.38, "#24d6ff"),
+      [playerB.id]: createDuoJumpRunner(0.62, "#ff4f91")
+    },
+    platforms: createDuoJumpPlatforms(),
+    runStartedAt: now + 1200,
+    pausedUntil: now + 1200,
+    lastTick: now,
+    lastScoredBy: null
+  };
+
+  rooms.set(roomId, room);
+  playerA.roomId = roomId;
+  playerB.roomId = roomId;
+
+  send(playerA, { type: "room-start", roomId, game: "duojump", opponent: playerB.name });
+  send(playerB, { type: "room-start", roomId, game: "duojump", opponent: playerA.name });
+  broadcastPlayers();
+}
+
+function createDuoJumpRunner(x, color) {
+  return {
+    x,
+    y: 0.68,
+    vy: -DUOJUMP_JUMP_SPEED,
+    direction: 0,
+    color
+  };
+}
+
+function createDuoJumpPlatforms() {
+  const platforms = [];
+
+  for (let i = 0; i < DUOJUMP_PLATFORM_COUNT; i += 1) {
+    const y = 0.18 + i * 0.085;
+    platforms.push({
+      x: i === DUOJUMP_PLATFORM_COUNT - 1 ? 0.5 : 0.15 + Math.random() * 0.7,
+      y,
+      w: DUOJUMP_PLATFORM_WIDTH
+    });
+  }
+
+  return platforms;
 }
 
 function leaveRoom(client, disconnected) {
@@ -539,7 +628,91 @@ function tickDuoPong(room, now) {
   }
 }
 
-function stateFor(room, viewer, now) {
+function duoJumpSpeedLevel(room, now) {
+  if (now < room.runStartedAt) return 1;
+  return Math.floor((now - room.runStartedAt) / 15000) + 1;
+}
+
+function duoJumpScrollSpeed(room, now) {
+  return DUOJUMP_BASE_SCROLL + (duoJumpSpeedLevel(room, now) - 1) * DUOJUMP_SCROLL_STEP;
+}
+
+function resetDuoJumpRound(room, scorer, now) {
+  room.lastScoredBy = scorer.id;
+  room.scores[scorer.id] += 1;
+  room.pausedUntil = now + 1300;
+  room.runStartedAt = room.pausedUntil;
+  room.platforms = createDuoJumpPlatforms();
+  room.runners[room.players[0].id] = createDuoJumpRunner(0.38, "#24d6ff");
+  room.runners[room.players[1].id] = createDuoJumpRunner(0.62, "#ff4f91");
+}
+
+function refillDuoJumpPlatforms(room) {
+  room.platforms = room.platforms.filter((platform) => platform.y < 1.08);
+
+  while (room.platforms.length < DUOJUMP_PLATFORM_COUNT) {
+    const topY = room.platforms.reduce((min, platform) => Math.min(min, platform.y), 0.22);
+    room.platforms.push({
+      x: 0.15 + Math.random() * 0.7,
+      y: topY - 0.085,
+      w: DUOJUMP_PLATFORM_WIDTH
+    });
+  }
+}
+
+function tickDuoJump(room, now) {
+  const dt = Math.min(0.05, (now - room.lastTick) / 1000);
+  room.lastTick = now;
+
+  if (now < room.pausedUntil) return;
+
+  const scroll = duoJumpScrollSpeed(room, now);
+  for (const platform of room.platforms) {
+    platform.y += scroll * dt;
+  }
+  refillDuoJumpPlatforms(room);
+
+  for (const player of room.players) {
+    const runner = room.runners[player.id];
+    const previousY = runner.y;
+
+    runner.x += runner.direction * DUOJUMP_MOVE_SPEED * dt;
+    if (runner.x < -DUOJUMP_PLAYER_RADIUS) runner.x = 1 + DUOJUMP_PLAYER_RADIUS;
+    if (runner.x > 1 + DUOJUMP_PLAYER_RADIUS) runner.x = -DUOJUMP_PLAYER_RADIUS;
+
+    runner.vy += DUOJUMP_GRAVITY * dt;
+    runner.y += runner.vy * dt;
+
+    if (runner.y < DUOJUMP_PLAYER_RADIUS) {
+      runner.y = DUOJUMP_PLAYER_RADIUS;
+      runner.vy = Math.max(0, runner.vy);
+    }
+
+    if (runner.vy > 0) {
+      const previousBottom = previousY + DUOJUMP_PLAYER_RADIUS;
+      const currentBottom = runner.y + DUOJUMP_PLAYER_RADIUS;
+
+      for (const platform of room.platforms) {
+        const isCrossing = previousBottom <= platform.y && currentBottom >= platform.y;
+        const isInside = Math.abs(runner.x - platform.x) <= platform.w / 2 + DUOJUMP_PLAYER_RADIUS * 0.8;
+
+        if (isCrossing && isInside) {
+          runner.y = platform.y - DUOJUMP_PLAYER_RADIUS;
+          runner.vy = -DUOJUMP_JUMP_SPEED;
+          break;
+        }
+      }
+    }
+
+    if (runner.y - DUOJUMP_PLAYER_RADIUS > 1.08) {
+      const scorer = room.players.find((candidate) => candidate !== player);
+      resetDuoJumpRound(room, scorer, now);
+      return;
+    }
+  }
+}
+
+function stateForDuoPong(room, viewer, now) {
   const opponent = room.players.find((player) => player !== viewer);
   const viewerIsBottom = viewer === room.players[0];
   const ball = room.ball;
@@ -576,15 +749,69 @@ function stateFor(room, viewer, now) {
   };
 }
 
+function stateForDuoJump(room, viewer, now) {
+  const opponent = room.players.find((player) => player !== viewer);
+  const you = room.runners[viewer.id];
+  const rival = room.runners[opponent.id];
+
+  return {
+    type: "game-state",
+    game: "duojump",
+    roomId: room.id,
+    you: viewer.name,
+    opponent: opponent.name,
+    sentAt: now,
+    runners: {
+      you: {
+        x: you.x,
+        y: you.y,
+        vy: you.vy,
+        direction: you.direction,
+        color: you.color
+      },
+      opponent: {
+        x: rival.x,
+        y: rival.y,
+        vy: rival.vy,
+        direction: rival.direction,
+        color: rival.color
+      }
+    },
+    platforms: room.platforms.map((platform) => ({
+      x: platform.x,
+      y: platform.y,
+      w: platform.w,
+      h: DUOJUMP_PLATFORM_HEIGHT
+    })),
+    scores: {
+      you: room.scores[viewer.id],
+      opponent: room.scores[opponent.id]
+    },
+    speed: duoJumpSpeedLevel(room, now),
+    pausedMs: Math.max(0, room.pausedUntil - now),
+    lastScoredBy:
+      room.lastScoredBy === viewer.id
+        ? "you"
+        : room.lastScoredBy === opponent.id
+          ? "opponent"
+          : null
+  };
+}
+
 function gameLoop() {
   const now = Date.now();
 
   for (const room of rooms.values()) {
-    if (room.game !== "duopong") continue;
-    tickDuoPong(room, now);
+    if (room.game === "duopong") {
+      tickDuoPong(room, now);
+    } else if (room.game === "duojump") {
+      tickDuoJump(room, now);
+    } else {
+      continue;
+    }
 
     for (const player of room.players) {
-      send(player, stateFor(room, player, now));
+      send(player, room.game === "duojump" ? stateForDuoJump(room, player, now) : stateForDuoPong(room, player, now));
     }
   }
 }

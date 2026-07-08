@@ -6,12 +6,23 @@ const MINIGAMES = [
     title: "DuoPong",
     description: "Pong online para dois celulares, com velocidade aumentando durante a rodada.",
     tags: ["2 jogadores", "online", "toque"]
+  },
+  {
+    id: "duojump",
+    title: "DuoJump",
+    description: "Bolinhas pulando em plataformas que descem cada vez mais rapido.",
+    tags: ["2 jogadores", "online", "setas"]
   }
 ];
 
 const STORAGE_NAME_KEY = "luduo-player-name";
 const STORAGE_DEVICE_KEY = "luduo-device-id";
 const HEARTBEAT_MS = 4000;
+const DUOJUMP_GRAVITY = 2.35;
+const DUOJUMP_MOVE_SPEED = 0.72;
+const DUOJUMP_BASE_SCROLL = 0.12;
+const DUOJUMP_SCROLL_STEP = 0.035;
+const DUOJUMP_RADIUS = 0.035;
 
 const screens = {
   login: document.getElementById("loginScreen"),
@@ -30,12 +41,15 @@ const challengeForm = document.getElementById("challengeForm");
 const targetInput = document.getElementById("targetInput");
 const lobbyMessage = document.getElementById("lobbyMessage");
 const inviteModal = document.getElementById("inviteModal");
+const inviteTitle = document.getElementById("inviteTitle");
 const inviteText = document.getElementById("inviteText");
 const acceptInviteButton = document.getElementById("acceptInviteButton");
 const declineInviteButton = document.getElementById("declineInviteButton");
 const leaveGameButton = document.getElementById("leaveGameButton");
 const canvas = document.getElementById("duopongCanvas");
 const controlZone = document.getElementById("controlZone");
+const leftButton = document.getElementById("leftMoveButton");
+const rightButton = document.getElementById("rightMoveButton");
 const youLabel = document.getElementById("youLabel");
 const opponentLabel = document.getElementById("opponentLabel");
 const youScore = document.getElementById("youScore");
@@ -50,6 +64,7 @@ const state = {
   playerName: "",
   deviceId: "",
   selectedGame: "duopong",
+  inviteGame: "duopong",
   players: [],
   inviteFrom: "",
   game: null,
@@ -58,7 +73,9 @@ const state = {
   leavingApp: false,
   renderStarted: false,
   lastPaddleSentAt: 0,
+  lastMoveSentAt: 0,
   localPaddleX: 0.5,
+  moveDirection: 0,
   visualGame: null,
   lastServerStateAt: 0,
   lastFrameAt: 0
@@ -76,6 +93,10 @@ function setMessage(element, message, good = false) {
 
 function normalizeName(name) {
   return String(name || "").trim().replace(/\s+/g, " ");
+}
+
+function gameById(id) {
+  return MINIGAMES.find((game) => game.id === id) || MINIGAMES[0];
 }
 
 function readStoredValue(key) {
@@ -215,8 +236,11 @@ function handleServerMessage(message) {
   }
 
   if (message.type === "invite") {
+    const game = gameById(message.game || "duopong");
     state.inviteFrom = message.from;
-    inviteText.textContent = `${message.from} chamou voce para jogar DuoPong.`;
+    state.inviteGame = game.id;
+    inviteTitle.textContent = game.title;
+    inviteText.textContent = `${message.from} chamou voce para jogar ${game.title}.`;
     inviteModal.hidden = false;
     return;
   }
@@ -233,14 +257,14 @@ function handleServerMessage(message) {
 
   if (message.type === "room-start") {
     inviteModal.hidden = true;
-    startDuoPong(message);
+    startGame(message);
     return;
   }
 
   if (message.type === "game-state") {
     state.lastServerStateAt = performance.now();
     state.game = message;
-    if (!state.visualGame) {
+    if (message.game === "duopong" && !state.visualGame) {
       state.visualGame = createVisualGame(message);
     }
     updateHud(message);
@@ -279,9 +303,9 @@ function renderGames() {
 
   MINIGAMES.forEach((game) => {
     const card = document.createElement("article");
-    card.className = "game-card";
+    card.className = `game-card ${state.selectedGame === game.id ? "is-selected" : ""}`;
     card.innerHTML = `
-      <div class="game-art" aria-hidden="true"><span></span></div>
+      <div class="game-art ${game.id}" aria-hidden="true"><span></span></div>
       <div>
         <h4>${game.title}</h4>
         <p>${game.description}</p>
@@ -293,6 +317,7 @@ function renderGames() {
     card.addEventListener("click", () => {
       state.selectedGame = game.id;
       setMessage(lobbyMessage, `${game.title} selecionado.`, true);
+      renderGames();
     });
     gameList.appendChild(card);
   });
@@ -325,6 +350,15 @@ function renderPlayers() {
   });
 }
 
+function startGame(message) {
+  if (message.game === "duojump") {
+    startDuoJump(message);
+    return;
+  }
+
+  startDuoPong(message);
+}
+
 function startDuoPong(message) {
   state.game = {
     type: "game-state",
@@ -338,14 +372,51 @@ function startDuoPong(message) {
     pausedMs: 1200
   };
   state.localPaddleX = 0.5;
+  state.moveDirection = 0;
   state.visualGame = createVisualGame(state.game);
   state.lastFrameAt = performance.now();
   state.lastServerStateAt = state.lastFrameAt;
   youLabel.textContent = state.playerName || "Voce";
   opponentLabel.textContent = message.opponent || "Rival";
+  controlZone.classList.add("is-pong");
+  controlZone.classList.remove("is-jump");
   showScreen("game");
   resizeCanvas();
   sendPaddle(0.5, true);
+  sendMove(0, true);
+
+  if (!state.renderStarted) {
+    state.renderStarted = true;
+    requestAnimationFrame(renderFrame);
+  }
+}
+
+function startDuoJump(message) {
+  state.game = {
+    type: "game-state",
+    game: "duojump",
+    you: state.playerName,
+    opponent: message.opponent,
+    runners: {
+      you: { x: 0.38, y: 0.68, vy: -0.86, direction: 0, color: "#24d6ff" },
+      opponent: { x: 0.62, y: 0.68, vy: -0.86, direction: 0, color: "#ff4f91" }
+    },
+    platforms: [],
+    scores: { you: 0, opponent: 0 },
+    speed: 1,
+    pausedMs: 1200
+  };
+  state.visualGame = null;
+  state.moveDirection = 0;
+  state.lastFrameAt = performance.now();
+  state.lastServerStateAt = state.lastFrameAt;
+  youLabel.textContent = state.playerName || "Voce";
+  opponentLabel.textContent = message.opponent || "Rival";
+  controlZone.classList.remove("is-pong");
+  controlZone.classList.add("is-jump");
+  showScreen("game");
+  resizeCanvas();
+  sendMove(0, true);
 
   if (!state.renderStarted) {
     state.renderStarted = true;
@@ -358,7 +429,7 @@ function updateHud(game) {
   opponentLabel.textContent = game.opponent || "Rival";
   youScore.textContent = String(game.scores.you);
   opponentScore.textContent = String(game.scores.opponent);
-  speedLabel.textContent = `Velocidade ${game.speed}`;
+  speedLabel.textContent = game.game === "duojump" ? `Plataformas ${game.speed}` : `Velocidade ${game.speed}`;
   countdownLabel.textContent = game.pausedMs > 0 ? Math.ceil(game.pausedMs / 1000) : "";
 }
 
@@ -471,7 +542,11 @@ function resizeCanvas() {
 }
 
 function renderFrame() {
-  drawDuoPong();
+  if (state.game && state.game.game === "duojump") {
+    drawDuoJump();
+  } else {
+    drawDuoPong();
+  }
   requestAnimationFrame(renderFrame);
 }
 
@@ -530,6 +605,97 @@ function drawDuoPong() {
   ctx.restore();
 }
 
+function duoJumpScrollSpeed(game) {
+  return DUOJUMP_BASE_SCROLL + (Math.max(1, Number(game.speed || 1)) - 1) * DUOJUMP_SCROLL_STEP;
+}
+
+function projectedRunner(runner, age) {
+  const direction = Number(runner.direction || 0);
+  let x = runner.x + direction * DUOJUMP_MOVE_SPEED * age;
+  if (x < -DUOJUMP_RADIUS) x = 1 + DUOJUMP_RADIUS;
+  if (x > 1 + DUOJUMP_RADIUS) x = -DUOJUMP_RADIUS;
+
+  return {
+    x,
+    y: runner.y + runner.vy * age + 0.5 * DUOJUMP_GRAVITY * age * age,
+    color: runner.color
+  };
+}
+
+function drawDuoJump() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const game = state.game;
+  const age = game && game.pausedMs <= 0 ? Math.min(0.12, (performance.now() - state.lastServerStateAt) / 1000) : 0;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#090b10";
+  ctx.fillRect(0, 0, width, height);
+
+  const courtLeft = 16;
+  const courtRight = width - 16;
+  const courtTop = 86;
+  const courtBottom = height - Math.min(height * 0.24, 210);
+  const courtWidth = courtRight - courtLeft;
+  const courtHeight = courtBottom - courtTop;
+
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+  ctx.lineWidth = 2;
+  roundRect(ctx, courtLeft, courtTop, courtWidth, courtHeight, 8);
+  ctx.stroke();
+  drawGlowNet(courtLeft, courtTop, courtWidth, courtHeight);
+
+  if (game) {
+    const scroll = duoJumpScrollSpeed(game);
+    for (const platform of game.platforms || []) {
+      const x = courtLeft + (platform.x - platform.w / 2) * courtWidth;
+      const y = courtTop + (platform.y + scroll * age) * courtHeight;
+      const platformWidth = platform.w * courtWidth;
+      const platformHeight = Math.max(8, platform.h * courtHeight);
+      drawPlatform(x, y, platformWidth, platformHeight);
+    }
+
+    if (game.runners) {
+      drawJumpRunner(projectedRunner(game.runners.opponent, age), courtLeft, courtTop, courtWidth, courtHeight, false);
+      drawJumpRunner(projectedRunner(game.runners.you, age), courtLeft, courtTop, courtWidth, courtHeight, true);
+    }
+
+  }
+
+  ctx.restore();
+}
+
+function drawPlatform(x, y, width, height) {
+  const gradient = ctx.createLinearGradient(x, y, x + width, y);
+  gradient.addColorStop(0, "rgba(110, 243, 165, 0.95)");
+  gradient.addColorStop(1, "rgba(36, 214, 255, 0.9)");
+  ctx.fillStyle = gradient;
+  ctx.shadowColor = "rgba(36, 214, 255, 0.28)";
+  ctx.shadowBlur = 8;
+  roundRect(ctx, x, y, width, height, 999);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawJumpRunner(runner, left, top, width, height, isYou) {
+  const x = left + runner.x * width;
+  const y = top + runner.y * height;
+  const radius = Math.max(12, Math.min(width, height) * 0.035);
+  ctx.fillStyle = runner.color || (isYou ? "#24d6ff" : "#ff4f91");
+  ctx.shadowColor = ctx.fillStyle;
+  ctx.shadowBlur = isYou ? 14 : 8;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = "rgba(9, 11, 16, 0.7)";
+  ctx.beginPath();
+  ctx.arc(x + radius * 0.32, y - radius * 0.22, radius * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 function drawGlowNet(left, top, width, height) {
   const gradient = ctx.createLinearGradient(left, top, left + width, top + height);
   gradient.addColorStop(0, "rgba(36, 214, 255, 0.08)");
@@ -574,10 +740,42 @@ function sendPaddle(x, force = false) {
   send({ type: "paddle", x });
 }
 
+function sendMove(direction, force = false) {
+  state.moveDirection = direction;
+  const now = performance.now();
+  if (!force && now - state.lastMoveSentAt < 33) return;
+  state.lastMoveSentAt = now;
+  send({ type: "move", direction });
+}
+
 function handlePointer(event) {
   if (!screens.game.classList.contains("is-active")) return;
+  if (!state.game || state.game.game !== "duopong") return;
   event.preventDefault();
   sendPaddle(pointerToPaddleX(event));
+}
+
+function bindMoveButton(button, direction) {
+  if (!button) return;
+
+  button.addEventListener("pointerdown", (event) => {
+    if (!state.game || state.game.game !== "duojump") return;
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    sendMove(direction, true);
+  });
+
+  const stop = (event) => {
+    if (!state.game || state.game.game !== "duojump") return;
+    event.preventDefault();
+    sendMove(0, true);
+  };
+
+  button.addEventListener("pointerup", stop);
+  button.addEventListener("pointercancel", stop);
+  button.addEventListener("lostpointercapture", () => {
+    if (state.game && state.game.game === "duojump") sendMove(0, true);
+  });
 }
 
 function notifyLeavingApp() {
@@ -655,6 +853,7 @@ declineInviteButton.addEventListener("click", () => {
 });
 
 leaveGameButton.addEventListener("click", () => {
+  sendMove(0, true);
   send({ type: "leave-room" });
   state.game = null;
   state.visualGame = null;
@@ -665,6 +864,8 @@ controlZone.addEventListener("pointerdown", handlePointer);
 controlZone.addEventListener("pointermove", handlePointer);
 canvas.addEventListener("pointerdown", handlePointer);
 canvas.addEventListener("pointermove", handlePointer);
+bindMoveButton(leftButton, -1);
+bindMoveButton(rightButton, 1);
 window.addEventListener("resize", resizeCanvas);
 window.addEventListener("pagehide", notifyLeavingApp);
 window.addEventListener("beforeunload", notifyLeavingApp);

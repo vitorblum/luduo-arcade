@@ -1,0 +1,47 @@
+name: Gerar APK Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "URL do servidor Render, exemplo: https://luduo-arcade.onrender.com"
+        required: true
+        default: "https://luduo-arcade.onrender.com"
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Baixar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar SDK Android
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Gerar APK instalavel
+        run: gradle assembleDebug -PserverUrl="${{ github.event.inputs.server_url }}"
+
+      - name: Publicar APK para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Luduo-Arcade-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk

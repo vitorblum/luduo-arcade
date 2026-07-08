@@ -1,0 +1,20 @@
+plugins {
+    id "com.android.application"
+}
+
+def defaultServerUrl = "https://luduo-arcade.onrender.com"
+def serverUrl = providers.gradleProperty("serverUrl").getOrElse(defaultServerUrl)
+
+android {
+    namespace "com.luduo.arcade"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.luduo.arcade"
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName "1.0.0"
+        resValue "string", "server_url", serverUrl
+    }
+}

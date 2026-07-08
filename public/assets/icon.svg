@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="88" y1="52" x2="434" y2="468" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24d6ff"/>
+      <stop offset="0.52" stop-color="#6ef3a5"/>
+      <stop offset="1" stop-color="#ff4f91"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.14 0 0 0 0 0.84 0 0 0 0 1 0 0 0 0.8 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="108" fill="#090b10"/>
+  <rect x="82" y="76" width="348" height="360" rx="76" fill="url(#bg)" opacity="0.96"/>
+  <rect x="132" y="142" width="48" height="228" rx="24" fill="#071015"/>
+  <rect x="332" y="142" width="48" height="228" rx="24" fill="#071015"/>
+  <circle cx="256" cy="256" r="34" fill="#f6f8ff" filter="url(#glow)"/>
+  <path d="M220 94h72M220 418h72" stroke="#f6f8ff" stroke-width="18" stroke-linecap="round" opacity="0.72"/>
+</svg>

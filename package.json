@@ -1,0 +1,21 @@
+{
+  "name": "luduo-arcade",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Luduo Arcade: app PWA para Android com minijogos online em dupla.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "pwa",
+    "android",
+    "minigames",
+    "pong",
+    "websocket"
+  ],
+  "license": "MIT"
+}

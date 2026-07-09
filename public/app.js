@@ -33,6 +33,7 @@ const DUOPONG_PADDLE_WIDTH = 0.27;
 const DUOPONG_TOP_PADDLE_Y = 0.08;
 const DUOPONG_BOTTOM_PADDLE_Y = 0.92;
 const DUOPONG_BALL_RADIUS = 0.022;
+const DUOPONG_PADDLE_HIT_PADDING = DUOPONG_BALL_RADIUS * 0.9;
 
 const screens = {
   login: document.getElementById("loginScreen"),
@@ -562,7 +563,7 @@ function reflectPosition(value, min, max) {
 }
 
 function pongPaddleHit(x, paddleX) {
-  return Math.abs(x - paddleX) <= DUOPONG_PADDLE_WIDTH / 2 + DUOPONG_BALL_RADIUS * 0.35;
+  return Math.abs(x - paddleX) <= DUOPONG_PADDLE_WIDTH / 2 + DUOPONG_PADDLE_HIT_PADDING;
 }
 
 function projectBall(game, seconds) {
@@ -640,6 +641,18 @@ function projectBall(game, seconds) {
 
 function predictedBall(game, now) {
   const age = Math.min(0.25, Math.max(0, (now - state.lastServerStateAt) / 1000));
+  if (game.game === "duopong") {
+    return projectBall(
+      {
+        ...game,
+        paddles: {
+          ...game.paddles,
+          you: state.localPaddleX
+        }
+      },
+      age
+    );
+  }
   return projectBall(game, age);
 }
 
@@ -665,7 +678,10 @@ function updateVisualGame(now) {
           vx: game.ball.vx,
           vy: game.ball.vy
         },
-        paddles: game.paddles
+        paddles: {
+          ...game.paddles,
+          you: state.localPaddleX
+        }
       },
       dt
     );
@@ -1049,7 +1065,7 @@ function pointerToPaddleX(event) {
 function sendPaddle(x, force = false) {
   state.localPaddleX = x;
   const now = performance.now();
-  if (!force && now - state.lastPaddleSentAt < 33) return;
+  if (!force && now - state.lastPaddleSentAt < 16) return;
   state.lastPaddleSentAt = now;
   send({ type: "paddle", x });
 }

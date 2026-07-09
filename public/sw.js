@@ -1,12 +1,12 @@
 "use strict";
 
-const CACHE_NAME = "luduo-arcade-v16";
+const CACHE_NAME = "luduo-arcade-v17";
 const ASSETS = [
   "/",
   "/index.html",
-  "/styles.css?v=16",
-  "/pontinhos.js?v=16",
-  "/app.js?v=16",
+  "/styles.css?v=17",
+  "/pontinhos.js?v=17",
+  "/app.js?v=17",
   "/manifest.webmanifest",
   "/assets/icon-192.png",
   "/assets/icon-512.png",

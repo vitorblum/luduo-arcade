@@ -7,13 +7,14 @@ const path = require("path");
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
-const TICK_MS = 1000 / 30;
+const TICK_MS = 1000 / 60;
 const STALE_SWEEP_MS = 3000;
 const CLIENT_TIMEOUT_MS = 12000;
 const PADDLE_WIDTH = 0.27;
 const PADDLE_Y_BOTTOM = 0.92;
 const PADDLE_Y_TOP = 0.08;
 const BALL_RADIUS = 0.022;
+const PADDLE_HIT_PADDING = BALL_RADIUS * 0.9;
 const BASE_SPEED = 0.42;
 const SPEED_STEP = 0.1;
 const DUOJUMP_PLAYER_RADIUS = 0.035;
@@ -758,7 +759,7 @@ function tickDuoPong(room, now) {
   if (ball.vy > 0 && ball.y + BALL_RADIUS >= PADDLE_Y_BOTTOM) {
     const contactY = PADDLE_Y_BOTTOM - BALL_RADIUS;
     const contactX = duoPongContactX(ball, previousX, previousY, contactY);
-    if (Math.abs(contactX - bottomPaddle) <= PADDLE_WIDTH / 2 + BALL_RADIUS * 0.35) {
+    if (Math.abs(contactX - bottomPaddle) <= PADDLE_WIDTH / 2 + PADDLE_HIT_PADDING) {
       ball.x = contactX;
       bounceDuoPongBall(ball, bottomPaddle, PADDLE_Y_BOTTOM - BALL_RADIUS, -1, targetSpeed);
     } else if (ball.y > 1 + BALL_RADIUS) {
@@ -770,7 +771,7 @@ function tickDuoPong(room, now) {
   if (ball.vy < 0 && ball.y - BALL_RADIUS <= PADDLE_Y_TOP) {
     const contactY = PADDLE_Y_TOP + BALL_RADIUS;
     const contactX = duoPongContactX(ball, previousX, previousY, contactY);
-    if (Math.abs(contactX - topPaddle) <= PADDLE_WIDTH / 2 + BALL_RADIUS * 0.35) {
+    if (Math.abs(contactX - topPaddle) <= PADDLE_WIDTH / 2 + PADDLE_HIT_PADDING) {
       ball.x = contactX;
       bounceDuoPongBall(ball, topPaddle, PADDLE_Y_TOP + BALL_RADIUS, 1, targetSpeed);
     } else if (ball.y < -BALL_RADIUS) {

@@ -26,7 +26,7 @@
     }
 
     calculateLayout(fixedRows = null, fixedColumns = null) {
-      const margin = Math.max(18, Math.min(30, this.width * 0.06));
+      const margin = Math.max(36, Math.min(46, this.width * 0.09));
       const availableWidth = Math.max(180, this.width - margin * 2);
       const availableHeight = Math.max(260, this.height - this.topInset - this.bottomInset);
       const minSpacing = 46;
@@ -60,6 +60,7 @@
         top,
         right: left + boardWidth,
         bottom: top + boardHeight,
+        pointTouchRadius: this.clamp(spacing * 0.36, 18, 32),
         touchRadius: this.clamp(spacing * 0.34, 15, 28)
       };
     }
@@ -89,6 +90,46 @@
       return edge.type === "h"
         ? Boolean(this.horizontal[edge.row][edge.column])
         : Boolean(this.vertical[edge.row][edge.column]);
+    }
+
+    findPointAt(x, y) {
+      const { rows, columns, pointTouchRadius } = this.layout;
+      let best = null;
+
+      for (let row = 0; row < rows; row += 1) {
+        for (let column = 0; column < columns; column += 1) {
+          const point = this.point(row, column);
+          const distance = Math.hypot(x - point.x, y - point.y);
+          if (distance <= pointTouchRadius && (!best || distance < best.distance)) {
+            best = { row, column, distance };
+          }
+        }
+      }
+
+      return best;
+    }
+
+    edgeFromPoints(start, end) {
+      if (!start || !end) return null;
+
+      const rowDelta = end.row - start.row;
+      const columnDelta = end.column - start.column;
+
+      if (Math.abs(rowDelta) + Math.abs(columnDelta) !== 1) return null;
+
+      if (rowDelta === 0) {
+        return {
+          type: "h",
+          row: start.row,
+          column: Math.min(start.column, end.column)
+        };
+      }
+
+      return {
+        type: "v",
+        row: Math.min(start.row, end.row),
+        column: start.column
+      };
     }
 
     findEdgeAt(x, y) {
@@ -128,6 +169,17 @@
       if (this.finished) return { played: false, reason: "finished" };
 
       const edge = this.findEdgeAt(x, y);
+      return this.playEdge(edge, now);
+    }
+
+    playBetweenPoints(start, end, now = Date.now()) {
+      if (this.finished) return { played: false, reason: "finished" };
+
+      const edge = this.edgeFromPoints(start, end);
+      return this.playEdge(edge, now);
+    }
+
+    playEdge(edge, now = Date.now()) {
       if (!edge || this.edgeExists(edge)) return { played: false, reason: "invalid" };
 
       const line = {

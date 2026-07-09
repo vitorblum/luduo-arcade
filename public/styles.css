@@ -703,6 +703,10 @@ h3 {
     padding-right: 14px;
   }
 
+  .screen-game {
+    padding: 0;
+  }
+
   .field-row,
   .challenge-form {
     grid-template-columns: 1fr;

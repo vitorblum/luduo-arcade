@@ -92,6 +92,7 @@ const state = {
   jumpPointerId: null,
   pontinhosGame: null,
   pontinhosPhase: 1,
+  pontinhosDrag: null,
   visualGame: null,
   lastServerStateAt: 0,
   lastFrameAt: 0
@@ -398,6 +399,7 @@ function startPontinhos(phase = state.pontinhosPhase) {
     top,
     bottom
   });
+  state.pontinhosDrag = null;
   state.game = {
     type: "local-state",
     game: "pontinhos",
@@ -786,6 +788,7 @@ function drawPontinhos() {
 
   drawPontinhosBoxes(game);
   drawPontinhosLines(game, now);
+  drawPontinhosDrag(game);
   drawPontinhosDots(game);
 
   ctx.restore();
@@ -857,6 +860,49 @@ function drawPontinhosDots(game) {
   }
 
   ctx.shadowBlur = 0;
+}
+
+function drawPontinhosDrag(game) {
+  const drag = state.pontinhosDrag;
+  if (!drag) return;
+
+  const start = game.point(drag.start.row, drag.start.column);
+  let end = {
+    x: Math.max(game.layout.left, Math.min(game.layout.right, drag.x)),
+    y: Math.max(game.layout.top, Math.min(game.layout.bottom, drag.y))
+  };
+
+  if (drag.target && drag.edge) {
+    end = game.point(drag.target.row, drag.target.column);
+  }
+
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineWidth = Math.max(5, Math.min(8, game.layout.spacing * 0.12));
+  ctx.strokeStyle = drag.valid ? playerColor(game.currentPlayer, 0.82) : "rgba(246, 248, 255, 0.26)";
+  ctx.shadowColor = drag.valid ? playerColor(game.currentPlayer, 0.36) : "rgba(246, 248, 255, 0.16)";
+  ctx.shadowBlur = drag.valid ? 12 : 6;
+  if (!drag.valid) ctx.setLineDash([8, 8]);
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = playerColor(game.currentPlayer, 0.95);
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, Math.max(8, game.layout.spacing * 0.13), 0, Math.PI * 2);
+  ctx.fill();
+
+  if (drag.valid && drag.target) {
+    const target = game.point(drag.target.row, drag.target.column);
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, Math.max(8, game.layout.spacing * 0.13), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 function drawPlatform(x, y, width, height) {
@@ -961,15 +1007,63 @@ function handlePointer(event) {
 }
 
 function handlePontinhosPointer(event) {
-  if (event.type !== "pointerdown" || !state.pontinhosGame) return;
+  const game = state.pontinhosGame;
+  if (!game) return;
   event.preventDefault();
-  const result = state.pontinhosGame.playAt(event.clientX, event.clientY, performance.now());
-  if (!result.played) return;
 
-  updatePontinhosHud();
-  if (result.finished) {
-    showPontinhosResult();
+  if (event.type === "pointerdown") {
+    const start = game.findPointAt(event.clientX, event.clientY);
+    if (!start) return;
+
+    state.pontinhosDrag = {
+      pointerId: event.pointerId,
+      start,
+      x: event.clientX,
+      y: event.clientY,
+      target: null,
+      edge: null,
+      valid: false
+    };
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch (err) {
+      // Pointer capture is only a comfort feature here; window pointerup still clears the drag.
+    }
+    return;
   }
+
+  const drag = state.pontinhosDrag;
+  if (!drag || drag.pointerId !== event.pointerId) return;
+
+  updatePontinhosDrag(event);
+
+  if (event.type === "pointerup" || event.type === "pointercancel") {
+    const result = drag.valid ? game.playBetweenPoints(drag.start, drag.target, performance.now()) : null;
+    state.pontinhosDrag = null;
+
+    if (result && result.played) {
+      updatePontinhosHud();
+      if (result.finished) {
+        showPontinhosResult();
+      }
+    }
+  }
+}
+
+function updatePontinhosDrag(event) {
+  const game = state.pontinhosGame;
+  const drag = state.pontinhosDrag;
+  if (!game || !drag) return;
+
+  const target = game.findPointAt(event.clientX, event.clientY);
+  const edge = game.edgeFromPoints(drag.start, target);
+
+  drag.x = event.clientX;
+  drag.y = event.clientY;
+  drag.target = target;
+  drag.edge = edge;
+  drag.valid = Boolean(edge && !game.edgeExists(edge));
 }
 
 function showPontinhosResult() {
@@ -988,6 +1082,7 @@ function exitLocalGame() {
   resultModal.hidden = true;
   state.game = null;
   state.pontinhosGame = null;
+  state.pontinhosDrag = null;
   controlZone.classList.remove("is-pong", "is-jump", "is-dots");
   showScreen("home");
 }
@@ -1158,9 +1253,19 @@ canvas.addEventListener("pointermove", handlePointer);
 canvas.addEventListener("pointerup", handlePointer);
 canvas.addEventListener("pointercancel", handlePointer);
 window.addEventListener("pointerup", (event) => {
+  if (state.game && state.game.game === "pontinhos" && state.pontinhosDrag?.pointerId === event.pointerId) {
+    handlePontinhosPointer(event);
+    return;
+  }
+
   if (state.game && state.game.game === "duojump" && state.jumpPointerId === event.pointerId) {
     state.jumpPointerId = null;
     sendMove(0, true);
+  }
+});
+window.addEventListener("pointercancel", (event) => {
+  if (state.game && state.game.game === "pontinhos" && state.pontinhosDrag?.pointerId === event.pointerId) {
+    handlePontinhosPointer(event);
   }
 });
 window.addEventListener("resize", resizeCanvas);

@@ -715,6 +715,14 @@ function bounceDuoPongBall(ball, paddleX, y, verticalDirection, targetSpeed) {
   ball.vy = verticalDirection * Math.sqrt(Math.max(targetSpeed * targetSpeed - ball.vx * ball.vx, targetSpeed * targetSpeed * 0.16));
 }
 
+function duoPongContactX(ball, previousX, previousY, contactY) {
+  const movementY = ball.y - previousY;
+  if (movementY === 0) return ball.x;
+
+  const progress = clamp((contactY - previousY) / movementY, 0, 1);
+  return previousX + (ball.x - previousX) * progress;
+}
+
 function tickDuoPong(room, now) {
   const dt = Math.min(0.05, (now - room.lastTick) / 1000);
   room.lastTick = now;
@@ -729,6 +737,8 @@ function tickDuoPong(room, now) {
   ball.vx = lateral;
   ball.vy = direction * Math.sqrt(Math.max(targetSpeed * targetSpeed - lateral * lateral, 0.01));
 
+  const previousX = ball.x;
+  const previousY = ball.y;
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
@@ -746,7 +756,10 @@ function tickDuoPong(room, now) {
   const topPaddle = room.paddles[topPlayer.id];
 
   if (ball.vy > 0 && ball.y + BALL_RADIUS >= PADDLE_Y_BOTTOM) {
-    if (Math.abs(ball.x - bottomPaddle) <= PADDLE_WIDTH / 2) {
+    const contactY = PADDLE_Y_BOTTOM - BALL_RADIUS;
+    const contactX = duoPongContactX(ball, previousX, previousY, contactY);
+    if (Math.abs(contactX - bottomPaddle) <= PADDLE_WIDTH / 2 + BALL_RADIUS * 0.35) {
+      ball.x = contactX;
       bounceDuoPongBall(ball, bottomPaddle, PADDLE_Y_BOTTOM - BALL_RADIUS, -1, targetSpeed);
     } else if (ball.y > 1 + BALL_RADIUS) {
       room.scores[topPlayer.id] += 1;
@@ -755,7 +768,10 @@ function tickDuoPong(room, now) {
   }
 
   if (ball.vy < 0 && ball.y - BALL_RADIUS <= PADDLE_Y_TOP) {
-    if (Math.abs(ball.x - topPaddle) <= PADDLE_WIDTH / 2) {
+    const contactY = PADDLE_Y_TOP + BALL_RADIUS;
+    const contactX = duoPongContactX(ball, previousX, previousY, contactY);
+    if (Math.abs(contactX - topPaddle) <= PADDLE_WIDTH / 2 + BALL_RADIUS * 0.35) {
+      ball.x = contactX;
       bounceDuoPongBall(ball, topPaddle, PADDLE_Y_TOP + BALL_RADIUS, 1, targetSpeed);
     } else if (ball.y < -BALL_RADIUS) {
       room.scores[bottomPlayer.id] += 1;

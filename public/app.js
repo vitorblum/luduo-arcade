@@ -29,6 +29,10 @@ const DUOJUMP_MOVE_SPEED = 0.72;
 const DUOJUMP_BASE_SCROLL = 0.17;
 const DUOJUMP_SCROLL_STEP = 0.05;
 const DUOJUMP_RADIUS = 0.035;
+const DUOPONG_PADDLE_WIDTH = 0.27;
+const DUOPONG_TOP_PADDLE_Y = 0.08;
+const DUOPONG_BOTTOM_PADDLE_Y = 0.92;
+const DUOPONG_BALL_RADIUS = 0.022;
 
 const screens = {
   login: document.getElementById("loginScreen"),
@@ -535,6 +539,10 @@ function lerp(start, end, amount) {
   return start + (end - start) * amount;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function canPredictBall(game) {
   return (
     game.pausedMs <= 0 &&
@@ -553,11 +561,74 @@ function reflectPosition(value, min, max) {
   return min + offset;
 }
 
+function pongPaddleHit(x, paddleX) {
+  return Math.abs(x - paddleX) <= DUOPONG_PADDLE_WIDTH / 2 + DUOPONG_BALL_RADIUS * 0.35;
+}
+
 function projectBall(game, seconds) {
   if (!canPredictBall(game)) {
     return {
       x: game.ball.x,
       y: game.ball.y
+    };
+  }
+
+  if (game.game === "duopong" || game.paddles) {
+    let x = game.ball.x;
+    let y = game.ball.y;
+    let vx = game.ball.vx;
+    let vy = game.ball.vy;
+    let remaining = seconds;
+
+    for (let step = 0; step < 3 && remaining > 0; step += 1) {
+      const wallTime =
+        vx > 0
+          ? (1 - DUOPONG_BALL_RADIUS - x) / vx
+          : vx < 0
+            ? (DUOPONG_BALL_RADIUS - x) / vx
+            : Infinity;
+      const paddleY =
+        vy > 0
+          ? DUOPONG_BOTTOM_PADDLE_Y - DUOPONG_BALL_RADIUS
+          : vy < 0
+            ? DUOPONG_TOP_PADDLE_Y + DUOPONG_BALL_RADIUS
+            : null;
+      const paddleTime = paddleY === null ? Infinity : (paddleY - y) / vy;
+      const nextEvent = Math.min(
+        wallTime > 0 ? wallTime : Infinity,
+        paddleTime > 0 ? paddleTime : Infinity
+      );
+
+      if (!Number.isFinite(nextEvent) || nextEvent > remaining) {
+        x += vx * remaining;
+        y += vy * remaining;
+        remaining = 0;
+        break;
+      }
+
+      x += vx * nextEvent;
+      y += vy * nextEvent;
+      remaining -= nextEvent;
+
+      if (Math.abs(nextEvent - wallTime) < 0.0001) {
+        x = clamp(x, DUOPONG_BALL_RADIUS, 1 - DUOPONG_BALL_RADIUS);
+        vx = -vx;
+      }
+
+      if (Math.abs(nextEvent - paddleTime) < 0.0001) {
+        const paddleX = vy > 0 ? game.paddles.you : game.paddles.opponent;
+        if (pongPaddleHit(x, paddleX)) {
+          vy = -vy;
+        } else {
+          y += vy * remaining;
+          remaining = 0;
+        }
+      }
+    }
+
+    return {
+      x: clamp(x, -DUOPONG_BALL_RADIUS, 1 + DUOPONG_BALL_RADIUS),
+      y: clamp(y, -DUOPONG_BALL_RADIUS, 1 + DUOPONG_BALL_RADIUS)
     };
   }
 
@@ -586,13 +657,15 @@ function updateVisualGame(now) {
   if (canPredictBall(game)) {
     const nextBall = projectBall(
       {
+        game: "duopong",
         pausedMs: 0,
         ball: {
           x: visual.ball.x,
           y: visual.ball.y,
           vx: game.ball.vx,
           vy: game.ball.vy
-        }
+        },
+        paddles: game.paddles
       },
       dt
     );
@@ -677,13 +750,15 @@ function drawDuoPong() {
   if (game && visual) {
     const ballX = courtLeft + visual.ball.x * courtWidth;
     const ballY = courtTop + visual.ball.y * courtHeight;
-    const paddleWidth = Math.max(84, courtWidth * 0.27);
+    const paddleWidth = Math.max(84, courtWidth * DUOPONG_PADDLE_WIDTH);
     const paddleHeight = 12;
+    const topPaddleY = courtTop + DUOPONG_TOP_PADDLE_Y * courtHeight - paddleHeight;
+    const bottomPaddleY = courtTop + DUOPONG_BOTTOM_PADDLE_Y * courtHeight;
 
-    drawPaddle(courtLeft + visual.paddles.opponent * courtWidth, courtTop + 20, paddleWidth, paddleHeight, "#ff4f91");
-    drawPaddle(courtLeft + visual.paddles.you * courtWidth, courtBottom - 32, paddleWidth, paddleHeight, "#24d6ff");
+    drawPaddle(courtLeft + visual.paddles.opponent * courtWidth, topPaddleY, paddleWidth, paddleHeight, "#ff4f91");
+    drawPaddle(courtLeft + visual.paddles.you * courtWidth, bottomPaddleY, paddleWidth, paddleHeight, "#24d6ff");
 
-    const ballRadius = Math.max(8, Math.min(width, height) * 0.018);
+    const ballRadius = Math.max(8, courtHeight * DUOPONG_BALL_RADIUS);
     ctx.fillStyle = "#f6f8ff";
     ctx.shadowColor = "rgba(255, 255, 255, 0.9)";
     ctx.shadowBlur = 10;

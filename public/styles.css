@@ -595,7 +595,7 @@ h3 {
   border-top: 1px solid rgba(36, 214, 255, 0.2);
   background:
     linear-gradient(180deg, rgba(36, 214, 255, 0), rgba(36, 214, 255, 0.08)),
-    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 34px);
+    rgba(9, 11, 16, 0.42);
   touch-action: none;
 }
 
@@ -628,7 +628,6 @@ h3 {
   border-top-color: rgba(110, 243, 165, 0.22);
   background:
     linear-gradient(180deg, rgba(110, 243, 165, 0), rgba(110, 243, 165, 0.08)),
-    repeating-linear-gradient(90deg, rgba(110, 243, 165, 0.08) 0 1px, transparent 1px 38px),
     rgba(9, 11, 16, 0.5);
 }
 

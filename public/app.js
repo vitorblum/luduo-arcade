@@ -11,7 +11,7 @@ const MINIGAMES = [
     id: "duojump",
     title: "DuoJump",
     description: "Bolinhas pulando em plataformas que descem cada vez mais rapido.",
-    tags: ["2 jogadores", "online", "setas"]
+    tags: ["2 jogadores", "online", "toque"]
   }
 ];
 

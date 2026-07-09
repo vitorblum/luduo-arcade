@@ -20,8 +20,8 @@ const DUOJUMP_PLAYER_RADIUS = 0.035;
 const DUOJUMP_PLATFORM_WIDTH = 0.22;
 const DUOJUMP_PLATFORM_HEIGHT = 0.018;
 const DUOJUMP_PLATFORM_COUNT = 9;
-const DUOJUMP_PLATFORM_SPACING = 0.092;
-const DUOJUMP_MAX_PLATFORM_STEP = 0.24;
+const DUOJUMP_BASE_PLATFORM_SPACING = 0.118;
+const DUOJUMP_MAX_PLATFORM_SPACING = 0.146;
 const DUOJUMP_GRAVITY = 2.35;
 const DUOJUMP_JUMP_SPEED = 0.86;
 const DUOJUMP_MOVE_SPEED = 0.72;
@@ -549,12 +549,56 @@ function createDuoJumpRunner(x, color) {
 function nextDuoJumpPlatformX(previousX) {
   const minX = 0.14;
   const maxX = 0.86;
-  const step = (Math.random() * 2 - 1) * DUOJUMP_MAX_PLATFORM_STEP;
+  const spacing = DUOJUMP_BASE_PLATFORM_SPACING;
+  const maxStep = duoJumpMaxPlatformStep(spacing, DUOJUMP_BASE_SCROLL, 0.35);
+  const minStep = maxStep * 0.48;
+  const distance = minStep + Math.random() * (maxStep - minStep);
+  const step = (Math.random() > 0.5 ? 1 : -1) * distance;
   let x = previousX + step;
 
   if (x < minX) x = minX + (minX - x);
   if (x > maxX) x = maxX - (x - maxX);
   return clamp(x, minX, maxX);
+}
+
+function duoJumpDifficulty(room, now) {
+  return Math.min(1, (duoJumpSpeedLevel(room, now) - 1) / 8);
+}
+
+function duoJumpPlatformSpacing(room, now) {
+  return DUOJUMP_BASE_PLATFORM_SPACING + (DUOJUMP_MAX_PLATFORM_SPACING - DUOJUMP_BASE_PLATFORM_SPACING) * duoJumpDifficulty(room, now);
+}
+
+function duoJumpFlightTimeForSpacing(spacing, scrollSpeed) {
+  const upwardSpeed = DUOJUMP_JUMP_SPEED + scrollSpeed;
+  const discriminant = upwardSpeed * upwardSpeed - 2 * DUOJUMP_GRAVITY * spacing;
+
+  if (discriminant <= 0) return 0;
+  return (upwardSpeed + Math.sqrt(discriminant)) / DUOJUMP_GRAVITY;
+}
+
+function duoJumpMaxPlatformStep(spacing, scrollSpeed, difficulty) {
+  const flightTime = duoJumpFlightTimeForSpacing(spacing, scrollSpeed);
+  const reach = DUOJUMP_MOVE_SPEED * flightTime + DUOJUMP_PLATFORM_WIDTH / 2 + DUOJUMP_PLAYER_RADIUS * 0.65;
+  return clamp(reach * (0.46 + difficulty * 0.18), 0.28, 0.44);
+}
+
+function nextDuoJumpPlatformXForRoom(room, now, previousX, spacing) {
+  const minX = 0.12;
+  const maxX = 0.88;
+  const difficulty = duoJumpDifficulty(room, now);
+  const maxStep = duoJumpMaxPlatformStep(spacing, duoJumpScrollSpeed(room, now), difficulty);
+  const minStep = maxStep * (0.55 + difficulty * 0.15);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const distance = minStep + Math.random() * (maxStep - minStep);
+    const x = previousX + (Math.random() > 0.5 ? distance : -distance);
+
+    if (x >= minX && x <= maxX) return x;
+  }
+
+  const fallback = previousX + (previousX < 0.5 ? maxStep : -maxStep);
+  return clamp(fallback, minX, maxX);
 }
 
 function wrappedDistance(a, b) {
@@ -569,10 +613,11 @@ function wrappedDistance(a, b) {
 function createDuoJumpPlatforms() {
   const platforms = [];
   let x = 0.5;
+  const bottomY = 0.72;
 
   for (let i = 0; i < DUOJUMP_PLATFORM_COUNT; i += 1) {
     const indexFromBottom = DUOJUMP_PLATFORM_COUNT - 1 - i;
-    const y = 0.18 + indexFromBottom * DUOJUMP_PLATFORM_SPACING;
+    const y = bottomY - indexFromBottom * DUOJUMP_BASE_PLATFORM_SPACING;
 
     if (i > 0) x = nextDuoJumpPlatformX(x);
     platforms.unshift({
@@ -659,6 +704,17 @@ function updateDuoPongBots(room, dt) {
   }
 }
 
+function bounceDuoPongBall(ball, paddleX, y, verticalDirection, targetSpeed) {
+  const offset = clamp((ball.x - paddleX) / (PADDLE_WIDTH / 2), -1, 1);
+  const edgePush = Math.sign(offset) * Math.pow(Math.abs(offset), 1.12) * targetSpeed * 0.88;
+  const carry = ball.vx * 0.74;
+  const lateralLimit = targetSpeed * 0.9;
+
+  ball.y = y;
+  ball.vx = clamp(carry + edgePush, -lateralLimit, lateralLimit);
+  ball.vy = verticalDirection * Math.sqrt(Math.max(targetSpeed * targetSpeed - ball.vx * ball.vx, targetSpeed * targetSpeed * 0.16));
+}
+
 function tickDuoPong(room, now) {
   const dt = Math.min(0.05, (now - room.lastTick) / 1000);
   room.lastTick = now;
@@ -691,10 +747,7 @@ function tickDuoPong(room, now) {
 
   if (ball.vy > 0 && ball.y + BALL_RADIUS >= PADDLE_Y_BOTTOM) {
     if (Math.abs(ball.x - bottomPaddle) <= PADDLE_WIDTH / 2) {
-      const offset = (ball.x - bottomPaddle) / (PADDLE_WIDTH / 2);
-      ball.y = PADDLE_Y_BOTTOM - BALL_RADIUS;
-      ball.vy = -Math.abs(ball.vy);
-      ball.vx += offset * 0.18;
+      bounceDuoPongBall(ball, bottomPaddle, PADDLE_Y_BOTTOM - BALL_RADIUS, -1, targetSpeed);
     } else if (ball.y > 1 + BALL_RADIUS) {
       room.scores[topPlayer.id] += 1;
       resetBall(room, topPlayer, now);
@@ -703,10 +756,7 @@ function tickDuoPong(room, now) {
 
   if (ball.vy < 0 && ball.y - BALL_RADIUS <= PADDLE_Y_TOP) {
     if (Math.abs(ball.x - topPaddle) <= PADDLE_WIDTH / 2) {
-      const offset = (ball.x - topPaddle) / (PADDLE_WIDTH / 2);
-      ball.y = PADDLE_Y_TOP + BALL_RADIUS;
-      ball.vy = Math.abs(ball.vy);
-      ball.vx += offset * 0.18;
+      bounceDuoPongBall(ball, topPaddle, PADDLE_Y_TOP + BALL_RADIUS, 1, targetSpeed);
     } else if (ball.y < -BALL_RADIUS) {
       room.scores[bottomPlayer.id] += 1;
       resetBall(room, bottomPlayer, now);
@@ -750,17 +800,18 @@ function scoreDuoJumpFall(room, fallenPlayer, now) {
   respawnDuoJumpRunner(room, fallenPlayer);
 }
 
-function refillDuoJumpPlatforms(room) {
+function refillDuoJumpPlatforms(room, now) {
   room.platforms = room.platforms.filter((platform) => platform.y < 1.08);
 
   while (room.platforms.length < DUOJUMP_PLATFORM_COUNT) {
+    const spacing = duoJumpPlatformSpacing(room, now);
     const topPlatform = room.platforms.reduce(
       (top, platform) => (platform.y < top.y ? platform : top),
       room.platforms[0] || { x: 0.5, y: 0.22 }
     );
     room.platforms.push({
-      x: nextDuoJumpPlatformX(topPlatform.x),
-      y: Math.min(topPlatform.y - DUOJUMP_PLATFORM_SPACING, -0.06),
+      x: nextDuoJumpPlatformXForRoom(room, now, topPlatform.x, spacing),
+      y: Math.min(topPlatform.y - spacing, -0.06),
       w: DUOJUMP_PLATFORM_WIDTH
     });
   }
@@ -794,7 +845,7 @@ function tickDuoJump(room, now) {
   for (const platform of room.platforms) {
     platform.y += scroll * dt;
   }
-  refillDuoJumpPlatforms(room);
+  refillDuoJumpPlatforms(room, now);
   updateDuoJumpBots(room);
 
   for (const player of room.players) {

@@ -20,8 +20,8 @@ const STORAGE_DEVICE_KEY = "luduo-device-id";
 const HEARTBEAT_MS = 4000;
 const DUOJUMP_GRAVITY = 2.35;
 const DUOJUMP_MOVE_SPEED = 0.72;
-const DUOJUMP_BASE_SCROLL = 0.12;
-const DUOJUMP_SCROLL_STEP = 0.035;
+const DUOJUMP_BASE_SCROLL = 0.17;
+const DUOJUMP_SCROLL_STEP = 0.05;
 const DUOJUMP_RADIUS = 0.035;
 
 const screens = {
@@ -38,6 +38,7 @@ const connectionDot = document.getElementById("connectionDot");
 const gameList = document.getElementById("gameList");
 const onlineList = document.getElementById("onlineList");
 const challengeForm = document.getElementById("challengeForm");
+const botMatchButton = document.getElementById("botMatchButton");
 const targetInput = document.getElementById("targetInput");
 const lobbyMessage = document.getElementById("lobbyMessage");
 const inviteModal = document.getElementById("inviteModal");
@@ -75,7 +76,6 @@ const state = {
   localPaddleX: 0.5,
   moveDirection: 0,
   jumpPointerId: null,
-  jumpDragStartX: 0,
   visualGame: null,
   lastServerStateAt: 0,
   lastFrameAt: 0
@@ -753,7 +753,7 @@ function handlePointer(event) {
   if (!state.game) return;
 
   if (state.game.game === "duojump") {
-    handleJumpDrag(event);
+    handleJumpTouch(event);
     return;
   }
 
@@ -762,30 +762,28 @@ function handlePointer(event) {
   sendPaddle(pointerToPaddleX(event));
 }
 
-function jumpDragDirection(event) {
-  const fullDragDistance = Math.max(56, window.innerWidth * 0.32);
-  return Math.max(-1, Math.min(1, (event.clientX - state.jumpDragStartX) / fullDragDistance));
+function jumpTouchDirection(event) {
+  return event.clientX >= window.innerWidth / 2 ? 1 : -1;
 }
 
-function handleJumpDrag(event) {
+function handleJumpTouch(event) {
   event.preventDefault();
 
   if (event.type === "pointerdown") {
     state.jumpPointerId = event.pointerId;
-    state.jumpDragStartX = event.clientX;
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch (err) {
       // Pointer capture is not essential; the window handlers still stop movement.
     }
-    sendMove(0, true);
+    sendMove(jumpTouchDirection(event), true);
     return;
   }
 
   if (state.jumpPointerId !== event.pointerId) return;
 
   if (event.type === "pointermove") {
-    sendMove(jumpDragDirection(event));
+    sendMove(jumpTouchDirection(event));
     return;
   }
 
@@ -852,6 +850,12 @@ challengeForm.addEventListener("submit", (event) => {
   }
 
   send({ type: "challenge", target, game: state.selectedGame });
+});
+
+botMatchButton.addEventListener("click", () => {
+  const game = gameById(state.selectedGame);
+  setMessage(lobbyMessage, `Abrindo ${game.title} contra a maquina...`, true);
+  send({ type: "bot-match", game: state.selectedGame });
 });
 
 acceptInviteButton.addEventListener("click", () => {

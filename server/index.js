@@ -17,16 +17,16 @@ const BALL_RADIUS = 0.022;
 const BASE_SPEED = 0.42;
 const SPEED_STEP = 0.1;
 const DUOJUMP_PLAYER_RADIUS = 0.035;
-const DUOJUMP_PLATFORM_WIDTH = 0.25;
+const DUOJUMP_PLATFORM_WIDTH = 0.22;
 const DUOJUMP_PLATFORM_HEIGHT = 0.018;
 const DUOJUMP_PLATFORM_COUNT = 9;
-const DUOJUMP_PLATFORM_SPACING = 0.085;
-const DUOJUMP_MAX_PLATFORM_STEP = 0.22;
+const DUOJUMP_PLATFORM_SPACING = 0.092;
+const DUOJUMP_MAX_PLATFORM_STEP = 0.24;
 const DUOJUMP_GRAVITY = 2.35;
 const DUOJUMP_JUMP_SPEED = 0.86;
 const DUOJUMP_MOVE_SPEED = 0.72;
-const DUOJUMP_BASE_SCROLL = 0.12;
-const DUOJUMP_SCROLL_STEP = 0.035;
+const DUOJUMP_BASE_SCROLL = 0.17;
+const DUOJUMP_SCROLL_STEP = 0.05;
 
 const clients = new Set();
 const names = new Map();
@@ -39,6 +39,7 @@ const gameTitles = {
 
 let nextClientId = 1;
 let nextRoomId = 1;
+let nextBotId = 1;
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -78,6 +79,7 @@ function clamp(value, min, max) {
 }
 
 function send(client, message) {
+  if (!client || client.isBot) return;
   if (!client.socket || client.socket.destroyed) return;
   const payload = Buffer.from(JSON.stringify(message));
   let header;
@@ -290,6 +292,8 @@ function handleMessage(client, message) {
 
   if (type === "challenge") {
     handleChallenge(client, message);
+  } else if (type === "bot-match") {
+    handleBotMatch(client, message);
   } else if (type === "accept") {
     handleAccept(client, message);
   } else if (type === "decline") {
@@ -383,6 +387,31 @@ function handleChallenge(client, message) {
 
   send(target, { type: "invite", from: client.name, game });
   send(client, { type: "invite-sent", to: target.name, game });
+}
+
+function createBotPlayer(game) {
+  return {
+    id: `bot-${nextBotId++}`,
+    name: game === "duojump" ? "Maquina Jump" : "Maquina Pong",
+    isBot: true,
+    roomId: null
+  };
+}
+
+function handleBotMatch(client, message) {
+  const game = String(message.game || "duopong");
+
+  if (!gameTitles[game]) {
+    sendError(client, "game-unavailable", "Esse minijogo ainda nao esta disponivel.");
+    return;
+  }
+
+  if (client.roomId) {
+    sendError(client, "busy", "Voce ja esta em uma partida.");
+    return;
+  }
+
+  createRoom(client, createBotPlayer(game), game);
 }
 
 function handleAccept(client, message) {
@@ -601,9 +630,39 @@ function resetBall(room, scorer, now) {
   room.ball.vy = loserIsTop ? -BASE_SPEED : BASE_SPEED;
 }
 
+function signedWrappedDelta(from, to) {
+  let delta = to - from;
+  if (delta > 0.5) delta -= 1;
+  if (delta < -0.5) delta += 1;
+  return delta;
+}
+
+function moveToward(current, target, amount) {
+  const delta = target - current;
+  if (Math.abs(delta) <= amount) return target;
+  return current + Math.sign(delta) * amount;
+}
+
+function updateDuoPongBots(room, dt) {
+  const botSpeed = 2.8;
+
+  for (const player of room.players) {
+    if (!player.isBot) continue;
+
+    const predictedX = clamp(room.ball.x + room.ball.vx * 0.18, PADDLE_WIDTH / 2, 1 - PADDLE_WIDTH / 2);
+    const current = room.paddles[player.id] || 0.5;
+    room.paddles[player.id] = clamp(
+      moveToward(current, predictedX, botSpeed * dt),
+      PADDLE_WIDTH / 2,
+      1 - PADDLE_WIDTH / 2
+    );
+  }
+}
+
 function tickDuoPong(room, now) {
   const dt = Math.min(0.05, (now - room.lastTick) / 1000);
   room.lastTick = now;
+  updateDuoPongBots(room, dt);
 
   if (now < room.pausedUntil) return;
 
@@ -701,9 +760,27 @@ function refillDuoJumpPlatforms(room) {
     );
     room.platforms.push({
       x: nextDuoJumpPlatformX(topPlatform.x),
-      y: topPlatform.y - DUOJUMP_PLATFORM_SPACING,
+      y: Math.min(topPlatform.y - DUOJUMP_PLATFORM_SPACING, -0.06),
       w: DUOJUMP_PLATFORM_WIDTH
     });
+  }
+}
+
+function findDuoJumpBotTarget(room, runner) {
+  const candidates = room.platforms
+    .filter((platform) => platform.y > runner.y + DUOJUMP_PLAYER_RADIUS && platform.y < 1)
+    .sort((a, b) => a.y - b.y);
+  return candidates[0] || findDuoJumpRespawnPlatform(room);
+}
+
+function updateDuoJumpBots(room) {
+  for (const player of room.players) {
+    if (!player.isBot) continue;
+
+    const runner = room.runners[player.id];
+    const target = findDuoJumpBotTarget(room, runner);
+    const delta = signedWrappedDelta(runner.x, target.x);
+    runner.direction = Math.abs(delta) < 0.02 ? 0 : clamp(delta / 0.16, -1, 1);
   }
 }
 
@@ -718,6 +795,7 @@ function tickDuoJump(room, now) {
     platform.y += scroll * dt;
   }
   refillDuoJumpPlatforms(room);
+  updateDuoJumpBots(room);
 
   for (const player of room.players) {
     const runner = room.runners[player.id];

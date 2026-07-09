@@ -8,7 +8,7 @@
     <title>Luduo Arcade</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css?v=10">
+    <link rel="stylesheet" href="/styles.css?v=12">
   </head>
   <body>
     <div id="app" class="app">
@@ -64,6 +64,7 @@
               <button type="submit">Desafiar</button>
             </form>
             <button id="botMatchButton" type="button" class="secondary bot-match-button">Jogar com maquina</button>
+            <button id="localMatchButton" type="button" class="secondary bot-match-button">Jogar neste celular</button>
 
             <div id="onlineList" class="online-list" aria-live="polite"></div>
             <p id="lobbyMessage" class="message" role="status"></p>
@@ -113,6 +114,20 @@
       </div>
     </div>
 
-    <script src="/app.js?v=10" defer></script>
+    <div id="resultModal" class="modal" hidden>
+      <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="resultTitle">
+        <p class="kicker">resultado</p>
+        <h2 id="resultTitle">Fim da partida</h2>
+        <p id="resultText"></p>
+        <div class="modal-actions result-actions">
+          <button id="nextPhaseButton" type="button">Proxima fase</button>
+          <button id="replayButton" type="button" class="secondary">Jogar novamente</button>
+          <button id="resultMenuButton" type="button" class="secondary">Voltar ao menu</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/pontinhos.js?v=12" defer></script>
+    <script src="/app.js?v=12" defer></script>
   </body>
 </html>

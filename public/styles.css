@@ -379,6 +379,51 @@ h3 {
   box-shadow: 0 0 18px rgba(255, 204, 102, 0.78);
 }
 
+.game-art.pontinhos::before {
+  left: 20px;
+  top: 24px;
+  width: 38px;
+  height: 4px;
+  background: var(--cyan);
+  transform: rotate(0deg);
+}
+
+.game-art.pontinhos::after {
+  left: 50px;
+  bottom: 24px;
+  width: 4px;
+  height: 38px;
+  background: var(--rose);
+  transform: none;
+}
+
+.game-art.pontinhos span,
+.game-art.pontinhos span::before,
+.game-art.pontinhos span::after {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 12px rgba(246, 248, 255, 0.65);
+  content: "";
+}
+
+.game-art.pontinhos span {
+  left: 18px;
+  top: 22px;
+}
+
+.game-art.pontinhos span::before {
+  left: 32px;
+  top: 0;
+}
+
+.game-art.pontinhos span::after {
+  left: 32px;
+  top: 42px;
+}
+
 .game-card h4 {
   margin: 0 0 6px;
   font-size: 1.4rem;
@@ -592,6 +637,10 @@ h3 {
   display: none;
 }
 
+.control-zone.is-dots {
+  display: none;
+}
+
 .modal {
   position: fixed;
   z-index: 20;
@@ -630,6 +679,10 @@ h3 {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 16px;
+}
+
+.result-actions {
+  grid-template-columns: 1fr;
 }
 
 .sr-only {

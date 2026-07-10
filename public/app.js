@@ -16,8 +16,8 @@ const MINIGAMES = [
   {
     id: "pontinhos",
     title: "Pontinhos",
-    description: "Dots and Boxes local para dois jogadores no mesmo celular.",
-    tags: ["2 locais", "portrait", "toque"]
+    description: "Dots and Boxes online para desafiar alguem ou jogar contra a maquina.",
+    tags: ["2 jogadores", "online", "maquina"]
   }
 ];
 
@@ -122,13 +122,13 @@ function gameById(id) {
 }
 
 function updateMatchActions() {
-  const isPontinhos = state.selectedGame === "pontinhos";
   const challengeButton = challengeForm.querySelector("button");
 
-  targetInput.disabled = isPontinhos;
-  challengeButton.disabled = isPontinhos;
-  botMatchButton.disabled = isPontinhos;
-  localMatchButton.disabled = !isPontinhos;
+  targetInput.disabled = false;
+  challengeButton.disabled = false;
+  botMatchButton.disabled = false;
+  localMatchButton.hidden = true;
+  localMatchButton.disabled = true;
 }
 
 function readStoredValue(key) {
@@ -296,6 +296,11 @@ function handleServerMessage(message) {
   if (message.type === "game-state") {
     state.lastServerStateAt = performance.now();
     state.game = message;
+    if (message.game === "pontinhos") {
+      updatePontinhosFromState(message);
+      updateHud(message);
+      return;
+    }
     if (message.game === "duopong" && !state.visualGame) {
       state.visualGame = createVisualGame(message);
     }
@@ -307,6 +312,8 @@ function handleServerMessage(message) {
     setMessage(lobbyMessage, message.message || "O outro jogador saiu.");
     state.game = null;
     state.visualGame = null;
+    state.pontinhosGame = null;
+    state.pontinhosDrag = null;
     showScreen("home");
     return;
   }
@@ -385,6 +392,11 @@ function renderPlayers() {
 }
 
 function startGame(message) {
+  if (message.game === "pontinhos") {
+    startPontinhos(message);
+    return;
+  }
+
   if (message.game === "duojump") {
     startDuoJump(message);
     return;
@@ -393,33 +405,83 @@ function startGame(message) {
   startDuoPong(message);
 }
 
-function startPontinhos(phase = state.pontinhosPhase) {
-  const top = 96;
-  const bottom = 26;
-  state.pontinhosPhase = Math.max(1, Math.min(window.PontinhosGame.MAX_PHASE, Number(phase) || 1));
-  state.pontinhosGame = new window.PontinhosGame({
-    phase: state.pontinhosPhase,
-    width: window.innerWidth,
-    height: window.innerHeight,
-    top,
-    bottom
-  });
+function mergePontinhosLines(previousRows, incomingRows, now) {
+  return (incomingRows || []).map((row, rowIndex) =>
+    (row || []).map((line, columnIndex) => {
+      const owner = Number(line?.owner || 0);
+      if (!owner) return null;
+
+      const previous = previousRows?.[rowIndex]?.[columnIndex];
+      if (previous && previous.owner === owner) return previous;
+
+      return { owner, start: now };
+    })
+  );
+}
+
+function updatePontinhosFromState(message) {
+  const rows = Number(message.rows || state.pontinhosGame?.layout.rows || 7);
+  const columns = Number(message.columns || state.pontinhosGame?.layout.columns || 5);
+  const needsBoard =
+    !state.pontinhosGame ||
+    state.pontinhosGame.layout.rows !== rows ||
+    state.pontinhosGame.layout.columns !== columns;
+
+  if (needsBoard) {
+    state.pontinhosGame = new window.PontinhosGame({
+      phase: Number(message.phase || 1),
+      rows,
+      columns,
+      width: window.innerWidth,
+      height: window.innerHeight,
+      top: 96,
+      bottom: 26
+    });
+    state.pontinhosDrag = null;
+  }
+
+  const game = state.pontinhosGame;
+  const now = performance.now();
+  game.phase = Number(message.phase || 1);
+  game.currentPlayer = Number(message.currentPlayer || 1);
+  game.scores = {
+    1: Number(message.scores?.[1] || 0),
+    2: Number(message.scores?.[2] || 0)
+  };
+  game.moves = Number(message.moves || 0);
+  game.totalMoves = Number(message.totalMoves || game.totalMoves || 0);
+  game.totalBoxes = Number(message.totalBoxes || game.totalBoxes || 0);
+  game.finished = Boolean(message.finished);
+  game.horizontal = mergePontinhosLines(game.horizontal, message.horizontal, now);
+  game.vertical = mergePontinhosLines(game.vertical, message.vertical, now);
+  game.boxes = (message.boxes || game.boxes || []).map((row) => (row || []).map((value) => Number(value || 0)));
+
+  if (game.finished && resultModal.hidden) {
+    showPontinhosResult();
+  }
+}
+
+function startPontinhos(message) {
+  if (!message || typeof message !== "object") return;
+
+  state.pontinhosPhase = Math.max(1, Math.min(window.PontinhosGame.MAX_PHASE, Number(message.phase) || 1));
   state.pontinhosDrag = null;
   state.game = {
-    type: "local-state",
-    game: "pontinhos",
-    you: "Jogador 1",
-    opponent: "Jogador 2"
+    ...message,
+    type: "game-state"
   };
   state.visualGame = null;
+  state.lastFrameAt = performance.now();
+  state.lastServerStateAt = state.lastFrameAt;
   resultModal.hidden = true;
+  nextPhaseButton.hidden = true;
+  replayButton.hidden = true;
   gameTitle.textContent = "Pontinhos";
-  youLabel.textContent = "Jogador 1";
-  opponentLabel.textContent = "Jogador 2";
   controlZone.classList.remove("is-pong", "is-jump");
   controlZone.classList.add("is-dots");
   showScreen("game");
   resizeCanvas();
+  updatePontinhosFromState(state.game);
   updatePontinhosHud();
 
   if (!state.renderStarted) {
@@ -514,12 +576,15 @@ function updatePontinhosHud() {
   const game = state.pontinhosGame;
   if (!game) return;
 
-  youLabel.textContent = "Jogador 1";
-  opponentLabel.textContent = "Jogador 2";
+  const players = state.game?.players || {};
+  const firstName = players[1] || "Jogador 1";
+  const secondName = players[2] || "Jogador 2";
+  youLabel.textContent = firstName;
+  opponentLabel.textContent = secondName;
   youScore.textContent = String(game.scores[1]);
   opponentScore.textContent = String(game.scores[2]);
   speedLabel.textContent = `Fase ${game.phase}`;
-  countdownLabel.textContent = game.currentPlayer === 1 ? "Azul" : "Vermelho";
+  countdownLabel.textContent = game.finished ? "Fim" : game.currentPlayer === 1 ? firstName : secondName;
   countdownLabel.style.color = game.currentPlayer === 1 ? "var(--cyan)" : "var(--rose)";
 }
 
@@ -1103,6 +1168,8 @@ function handlePontinhosPointer(event) {
   event.preventDefault();
 
   if (event.type === "pointerdown") {
+    if (state.game?.youPlayer && state.game.currentPlayer !== state.game.youPlayer) return;
+
     const start = game.findPointAt(event.clientX, event.clientY);
     if (!start) return;
 
@@ -1130,15 +1197,20 @@ function handlePontinhosPointer(event) {
   updatePontinhosDrag(event);
 
   if (event.type === "pointerup" || event.type === "pointercancel") {
-    const result = drag.valid ? game.playBetweenPoints(drag.start, drag.target, performance.now()) : null;
-    state.pontinhosDrag = null;
-
-    if (result && result.played) {
-      updatePontinhosHud();
-      if (result.finished) {
-        showPontinhosResult();
-      }
+    if (drag.valid) {
+      send({
+        type: "dots-line",
+        start: {
+          row: drag.start.row,
+          column: drag.start.column
+        },
+        end: {
+          row: drag.target.row,
+          column: drag.target.column
+        }
+      });
     }
+    state.pontinhosDrag = null;
   }
 }
 
@@ -1161,21 +1233,62 @@ function showPontinhosResult() {
   const game = state.pontinhosGame;
   if (!game) return;
 
-  const result = game.result();
+  const players = state.game?.players || {};
+  const firstName = players[1] || "Jogador 1";
+  const secondName = players[2] || "Jogador 2";
+  const scores = game.scores;
+  const winner = scores[1] === scores[2] ? 0 : scores[1] > scores[2] ? 1 : 2;
   resultTitle.textContent =
-    result.winner === 0 ? "Empate" : result.winner === 1 ? "Jogador 1 venceu" : "Jogador 2 venceu";
-  resultText.textContent = `Fase ${result.phase}: Jogador 1 fez ${result.scores[1]} quadrados, Jogador 2 fez ${result.scores[2]}.`;
-  nextPhaseButton.hidden = result.phase >= game.maxPhase;
+    winner === 0 ? "Empate" : winner === 1 ? `${firstName} venceu` : `${secondName} venceu`;
+  resultText.textContent = `Fase ${game.phase}: ${firstName} fez ${scores[1]} quadrados, ${secondName} fez ${scores[2]}.`;
+  nextPhaseButton.hidden = true;
+  replayButton.hidden = false;
   resultModal.hidden = false;
 }
 
 function exitLocalGame() {
+  if (state.game?.game === "pontinhos" && state.game.type !== "local-state") {
+    send({ type: "leave-room" });
+  }
+
   resultModal.hidden = true;
   state.game = null;
   state.pontinhosGame = null;
   state.pontinhosDrag = null;
   controlZone.classList.remove("is-pong", "is-jump", "is-dots");
   showScreen("home");
+}
+
+function replayPontinhosOnline() {
+  const previous = state.game;
+  const opponent = previous?.opponent || "";
+  const botMatch = /maquina/i.test(opponent);
+
+  resultModal.hidden = true;
+  if (previous?.game === "pontinhos") {
+    send({ type: "leave-room" });
+  }
+
+  state.game = null;
+  state.pontinhosGame = null;
+  state.pontinhosDrag = null;
+  state.visualGame = null;
+  controlZone.classList.remove("is-pong", "is-jump", "is-dots");
+  state.selectedGame = "pontinhos";
+  renderGames();
+  showScreen("home");
+
+  if (botMatch) {
+    setMessage(lobbyMessage, "Abrindo Pontinhos contra a maquina...", true);
+    send({ type: "bot-match", game: "pontinhos" });
+    return;
+  }
+
+  if (opponent) {
+    targetInput.value = opponent;
+    setMessage(lobbyMessage, `Chamando ${opponent} para outra partida...`, true);
+    send({ type: "challenge", target: opponent, game: "pontinhos" });
+  }
 }
 
 function jumpTouchDirection(event) {
@@ -1259,11 +1372,6 @@ loginForm.addEventListener("submit", (event) => {
 challengeForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
-  if (state.selectedGame === "pontinhos") {
-    startPontinhos();
-    return;
-  }
-
   const target = normalizeName(targetInput.value);
 
   if (!target) {
@@ -1275,22 +1383,13 @@ challengeForm.addEventListener("submit", (event) => {
 });
 
 botMatchButton.addEventListener("click", () => {
-  if (state.selectedGame === "pontinhos") {
-    startPontinhos();
-    return;
-  }
-
   const game = gameById(state.selectedGame);
   setMessage(lobbyMessage, `Abrindo ${game.title} contra a maquina...`, true);
   send({ type: "bot-match", game: state.selectedGame });
 });
 
 localMatchButton.addEventListener("click", () => {
-  if (state.selectedGame !== "pontinhos") {
-    setMessage(lobbyMessage, "Jogo local disponivel para Pontinhos.", false);
-    return;
-  }
-  startPontinhos();
+  setMessage(lobbyMessage, "Use Desafiar ou Jogar com maquina.", false);
 });
 
 acceptInviteButton.addEventListener("click", () => {
@@ -1322,15 +1421,13 @@ leaveGameButton.addEventListener("click", () => {
 });
 
 nextPhaseButton.addEventListener("click", () => {
-  if (!state.pontinhosGame) return;
-  const nextPhase = Math.min(state.pontinhosGame.maxPhase, state.pontinhosGame.phase + 1);
-  state.pontinhosPhase = nextPhase;
-  startPontinhos(nextPhase);
+  nextPhaseButton.hidden = true;
 });
 
 replayButton.addEventListener("click", () => {
-  const phase = state.pontinhosGame ? state.pontinhosGame.phase : state.pontinhosPhase;
-  startPontinhos(phase);
+  if (state.game?.game === "pontinhos") {
+    replayPontinhosOnline();
+  }
 });
 
 resultMenuButton.addEventListener("click", exitLocalGame);

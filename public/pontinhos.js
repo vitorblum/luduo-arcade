@@ -4,9 +4,11 @@
   class PontinhosGame {
     static MAX_PHASE = 6;
 
-    constructor({ phase = 1, width, height, top = 96, bottom = 24 }) {
+    constructor({ phase = 1, width, height, top = 96, bottom = 24, rows = null, columns = null }) {
       this.phase = Math.max(1, Math.min(PontinhosGame.MAX_PHASE, Number(phase) || 1));
       this.maxPhase = PontinhosGame.MAX_PHASE;
+      this.fixedRows = Number.isInteger(rows) ? rows : null;
+      this.fixedColumns = Number.isInteger(columns) ? columns : null;
       this.currentPlayer = 1;
       this.scores = { 1: 0, 2: 0 };
       this.moves = 0;
@@ -16,8 +18,8 @@
     }
 
     resize(width, height, top = 96, bottom = 24) {
-      const fixedRows = this.layout && this.horizontal ? this.layout.rows : null;
-      const fixedColumns = this.layout && this.horizontal ? this.layout.columns : null;
+      const fixedRows = this.layout && this.horizontal ? this.layout.rows : this.fixedRows;
+      const fixedColumns = this.layout && this.horizontal ? this.layout.columns : this.fixedColumns;
       this.width = Math.max(1, width);
       this.height = Math.max(1, height);
       this.topInset = top;

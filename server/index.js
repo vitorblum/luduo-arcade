@@ -28,6 +28,9 @@ const DUOJUMP_JUMP_SPEED = 0.86;
 const DUOJUMP_MOVE_SPEED = 0.72;
 const DUOJUMP_BASE_SCROLL = 0.17;
 const DUOJUMP_SCROLL_STEP = 0.05;
+const PONTINHOS_ROWS = 7;
+const PONTINHOS_COLUMNS = 5;
+const PONTINHOS_BOT_DELAY_MS = 420;
 
 const clients = new Set();
 const names = new Map();
@@ -35,7 +38,8 @@ const rooms = new Map();
 
 const gameTitles = {
   duopong: "DuoPong",
-  duojump: "DuoJump"
+  duojump: "DuoJump",
+  pontinhos: "Pontinhos"
 };
 
 let nextClientId = 1;
@@ -303,6 +307,8 @@ function handleMessage(client, message) {
     handlePaddle(client, message);
   } else if (type === "move") {
     handleMove(client, message);
+  } else if (type === "dots-line") {
+    handlePontinhosLine(client, message);
   } else if (type === "leave-room") {
     leaveRoom(client, false);
   } else {
@@ -393,7 +399,7 @@ function handleChallenge(client, message) {
 function createBotPlayer(game) {
   return {
     id: `bot-${nextBotId++}`,
-    name: game === "duojump" ? "Maquina Jump" : "Maquina Pong",
+    name: game === "duojump" ? "Maquina Jump" : game === "pontinhos" ? "Maquina Pontinhos" : "Maquina Pong",
     isBot: true,
     roomId: null
   };
@@ -461,7 +467,271 @@ function handleMove(client, message) {
   room.runners[client.id].direction = clamp(Number(message.direction || 0), -1, 1);
 }
 
+function pontinhosPlayerNumber(room, player) {
+  return room.players[0] === player ? 1 : 2;
+}
+
+function pontinhosEdgeFromPoints(room, start, end) {
+  const first = {
+    row: Number(start?.row),
+    column: Number(start?.column)
+  };
+  const second = {
+    row: Number(end?.row),
+    column: Number(end?.column)
+  };
+
+  if (
+    !Number.isInteger(first.row) ||
+    !Number.isInteger(first.column) ||
+    !Number.isInteger(second.row) ||
+    !Number.isInteger(second.column)
+  ) {
+    return null;
+  }
+
+  if (
+    first.row < 0 ||
+    second.row < 0 ||
+    first.column < 0 ||
+    second.column < 0 ||
+    first.row >= room.rows ||
+    second.row >= room.rows ||
+    first.column >= room.columns ||
+    second.column >= room.columns
+  ) {
+    return null;
+  }
+
+  const rowDelta = second.row - first.row;
+  const columnDelta = second.column - first.column;
+  if (Math.abs(rowDelta) + Math.abs(columnDelta) !== 1) return null;
+
+  if (rowDelta === 0) {
+    return {
+      type: "h",
+      row: first.row,
+      column: Math.min(first.column, second.column)
+    };
+  }
+
+  return {
+    type: "v",
+    row: Math.min(first.row, second.row),
+    column: first.column
+  };
+}
+
+function pontinhosEdgeExists(room, edge) {
+  if (!edge) return true;
+  return edge.type === "h"
+    ? Boolean(room.horizontal[edge.row]?.[edge.column])
+    : Boolean(room.vertical[edge.row]?.[edge.column]);
+}
+
+function pontinhosBoxComplete(room, row, column) {
+  return Boolean(
+    room.horizontal[row]?.[column] &&
+      room.horizontal[row + 1]?.[column] &&
+      room.vertical[row]?.[column] &&
+      room.vertical[row]?.[column + 1]
+  );
+}
+
+function capturePontinhosBox(room, row, column, owner) {
+  if (row < 0 || column < 0 || row >= room.rows - 1 || column >= room.columns - 1) return false;
+  if (room.boxes[row][column]) return false;
+  if (!pontinhosBoxComplete(room, row, column)) return false;
+
+  room.boxes[row][column] = owner;
+  return true;
+}
+
+function capturePontinhosBoxes(room, edge, owner) {
+  const candidates =
+    edge.type === "h"
+      ? [
+          { row: edge.row - 1, column: edge.column },
+          { row: edge.row, column: edge.column }
+        ]
+      : [
+          { row: edge.row, column: edge.column - 1 },
+          { row: edge.row, column: edge.column }
+        ];
+
+  let captured = 0;
+  for (const box of candidates) {
+    if (capturePontinhosBox(room, box.row, box.column, owner)) captured += 1;
+  }
+  return captured;
+}
+
+function pontinhosCapturedByEdge(room, edge) {
+  if (!edge || pontinhosEdgeExists(room, edge)) return 0;
+
+  const candidates =
+    edge.type === "h"
+      ? [
+          { row: edge.row - 1, column: edge.column },
+          { row: edge.row, column: edge.column }
+        ]
+      : [
+          { row: edge.row, column: edge.column - 1 },
+          { row: edge.row, column: edge.column }
+        ];
+
+  let captured = 0;
+  if (edge.type === "h") {
+    room.horizontal[edge.row][edge.column] = { owner: 0, startAt: 0 };
+  } else {
+    room.vertical[edge.row][edge.column] = { owner: 0, startAt: 0 };
+  }
+
+  for (const box of candidates) {
+    if (
+      box.row >= 0 &&
+      box.column >= 0 &&
+      box.row < room.rows - 1 &&
+      box.column < room.columns - 1 &&
+      !room.boxes[box.row][box.column] &&
+      pontinhosBoxComplete(room, box.row, box.column)
+    ) {
+      captured += 1;
+    }
+  }
+
+  if (edge.type === "h") {
+    room.horizontal[edge.row][edge.column] = null;
+  } else {
+    room.vertical[edge.row][edge.column] = null;
+  }
+
+  return captured;
+}
+
+function pontinhosOpenEdges(room) {
+  const edges = [];
+  for (let row = 0; row < room.rows; row += 1) {
+    for (let column = 0; column < room.columns - 1; column += 1) {
+      if (!room.horizontal[row][column]) edges.push({ type: "h", row, column });
+    }
+  }
+  for (let row = 0; row < room.rows - 1; row += 1) {
+    for (let column = 0; column < room.columns; column += 1) {
+      if (!room.vertical[row][column]) edges.push({ type: "v", row, column });
+    }
+  }
+  return edges;
+}
+
+function pontinhosCompletedSides(room, row, column) {
+  if (row < 0 || column < 0 || row >= room.rows - 1 || column >= room.columns - 1) return 0;
+  return [
+    room.horizontal[row][column],
+    room.horizontal[row + 1][column],
+    room.vertical[row][column],
+    room.vertical[row][column + 1]
+  ].filter(Boolean).length;
+}
+
+function pontinhosCreatesThirdSide(room, edge) {
+  const candidates =
+    edge.type === "h"
+      ? [
+          { row: edge.row - 1, column: edge.column },
+          { row: edge.row, column: edge.column }
+        ]
+      : [
+          { row: edge.row, column: edge.column - 1 },
+          { row: edge.row, column: edge.column }
+        ];
+
+  return candidates.some((box) => pontinhosCompletedSides(room, box.row, box.column) === 2);
+}
+
+function schedulePontinhosBot(room, now) {
+  const player = room.players[room.currentPlayer - 1];
+  room.botMoveAt = player?.isBot && !room.finished ? now + PONTINHOS_BOT_DELAY_MS : 0;
+}
+
+function playPontinhosEdge(room, edge, now) {
+  if (room.finished || pontinhosEdgeExists(room, edge)) {
+    return { played: false, captured: 0 };
+  }
+
+  const owner = room.currentPlayer;
+  const line = { owner, startAt: now };
+  if (edge.type === "h") {
+    room.horizontal[edge.row][edge.column] = line;
+  } else {
+    room.vertical[edge.row][edge.column] = line;
+  }
+
+  room.moves += 1;
+  const captured = capturePontinhosBoxes(room, edge, owner);
+  if (captured > 0) {
+    room.scores[owner] += captured;
+  } else {
+    room.currentPlayer = owner === 1 ? 2 : 1;
+  }
+
+  if (room.moves >= room.totalMoves || room.scores[1] + room.scores[2] >= room.totalBoxes) {
+    room.finished = true;
+  }
+
+  schedulePontinhosBot(room, now);
+  return { played: true, captured };
+}
+
+function choosePontinhosBotEdge(room) {
+  const edges = pontinhosOpenEdges(room);
+  if (!edges.length) return null;
+
+  const captures = edges.filter((edge) => pontinhosCapturedByEdge(room, edge) > 0);
+  if (captures.length) return captures[Math.floor(Math.random() * captures.length)];
+
+  const safe = edges.filter((edge) => !pontinhosCreatesThirdSide(room, edge));
+  const pool = safe.length ? safe : edges;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function updatePontinhosBot(room, now) {
+  if (room.finished || !room.botMoveAt || now < room.botMoveAt) return;
+  const player = room.players[room.currentPlayer - 1];
+  if (!player?.isBot) return;
+
+  const edge = choosePontinhosBotEdge(room);
+  if (edge) {
+    playPontinhosEdge(room, edge, now);
+  } else {
+    room.finished = true;
+  }
+}
+
+function handlePontinhosLine(client, message) {
+  if (!client.roomId) return;
+  const room = rooms.get(client.roomId);
+  if (!room || room.game !== "pontinhos" || room.finished) return;
+
+  const playerNumber = pontinhosPlayerNumber(room, client);
+  if (room.currentPlayer !== playerNumber) {
+    sendError(client, "not-your-turn", "Agora e a vez do outro jogador.");
+    return;
+  }
+
+  const edge = pontinhosEdgeFromPoints(room, message.start, message.end);
+  const result = playPontinhosEdge(room, edge, Date.now());
+  if (!result.played) {
+    sendError(client, "invalid-move", "Ligue apenas pontos vizinhos livres.");
+  }
+}
+
 function createRoom(playerA, playerB, game) {
+  if (game === "pontinhos") {
+    createPontinhosRoom(playerA, playerB);
+    return;
+  }
+
   if (game === "duojump") {
     createDuoJumpRoom(playerA, playerB);
     return;
@@ -503,6 +773,41 @@ function createDuoPongRoom(playerA, playerB) {
 
   send(playerA, { type: "room-start", roomId, game: "duopong", opponent: playerB.name });
   send(playerB, { type: "room-start", roomId, game: "duopong", opponent: playerA.name });
+  broadcastPlayers();
+}
+
+function createPontinhosRoom(playerA, playerB) {
+  const roomId = `room-${nextRoomId++}`;
+  const now = Date.now();
+  const rows = PONTINHOS_ROWS;
+  const columns = PONTINHOS_COLUMNS;
+  const room = {
+    id: roomId,
+    game: "pontinhos",
+    players: [playerA, playerB],
+    rows,
+    columns,
+    phase: 1,
+    horizontal: Array.from({ length: rows }, () => Array(columns - 1).fill(null)),
+    vertical: Array.from({ length: rows - 1 }, () => Array(columns).fill(null)),
+    boxes: Array.from({ length: rows - 1 }, () => Array(columns - 1).fill(0)),
+    scores: { 1: 0, 2: 0 },
+    currentPlayer: 1,
+    moves: 0,
+    totalMoves: rows * (columns - 1) + (rows - 1) * columns,
+    totalBoxes: (rows - 1) * (columns - 1),
+    finished: false,
+    botMoveAt: 0,
+    lastTick: now
+  };
+
+  rooms.set(roomId, room);
+  playerA.roomId = roomId;
+  playerB.roomId = roomId;
+  schedulePontinhosBot(room, now);
+
+  send(playerA, roomStartForPontinhos(room, playerA, now));
+  send(playerB, roomStartForPontinhos(room, playerB, now));
   broadcastPlayers();
 }
 
@@ -985,7 +1290,52 @@ function stateForDuoJump(room, viewer, now) {
         ? "you"
         : room.lastScoredBy === opponent.id
           ? "opponent"
-          : null
+      : null
+  };
+}
+
+function serializePontinhosLines(rows) {
+  return rows.map((row) => row.map((line) => (line ? { owner: line.owner } : null)));
+}
+
+function stateForPontinhos(room, viewer, now) {
+  const opponent = room.players.find((player) => player !== viewer);
+  const youPlayer = pontinhosPlayerNumber(room, viewer);
+
+  return {
+    type: "game-state",
+    game: "pontinhos",
+    roomId: room.id,
+    sentAt: now,
+    phase: room.phase,
+    rows: room.rows,
+    columns: room.columns,
+    you: viewer.name,
+    opponent: opponent?.name || "",
+    youPlayer,
+    currentPlayer: room.currentPlayer,
+    players: {
+      1: room.players[0].name,
+      2: room.players[1].name
+    },
+    scores: {
+      1: room.scores[1],
+      2: room.scores[2]
+    },
+    horizontal: serializePontinhosLines(room.horizontal),
+    vertical: serializePontinhosLines(room.vertical),
+    boxes: room.boxes.map((row) => row.slice()),
+    moves: room.moves,
+    totalMoves: room.totalMoves,
+    totalBoxes: room.totalBoxes,
+    finished: room.finished
+  };
+}
+
+function roomStartForPontinhos(room, viewer, now) {
+  return {
+    ...stateForPontinhos(room, viewer, now),
+    type: "room-start"
   };
 }
 
@@ -997,12 +1347,20 @@ function gameLoop() {
       tickDuoPong(room, now);
     } else if (room.game === "duojump") {
       tickDuoJump(room, now);
+    } else if (room.game === "pontinhos") {
+      updatePontinhosBot(room, now);
     } else {
       continue;
     }
 
     for (const player of room.players) {
-      send(player, room.game === "duojump" ? stateForDuoJump(room, player, now) : stateForDuoPong(room, player, now));
+      const state =
+        room.game === "duojump"
+          ? stateForDuoJump(room, player, now)
+          : room.game === "pontinhos"
+            ? stateForPontinhos(room, player, now)
+            : stateForDuoPong(room, player, now);
+      send(player, state);
     }
   }
 }
